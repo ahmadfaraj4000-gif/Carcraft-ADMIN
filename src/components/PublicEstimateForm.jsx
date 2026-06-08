@@ -15,6 +15,7 @@ const initial = {
   damageType: '',
   severity: 'moderate',
   description: '',
+  rentalVehicleInterest: false,
   preferredContactMethod: 'phone'
 }
 
@@ -86,7 +87,7 @@ export default function PublicEstimateForm() {
             <label>Year<input value={form.vehicleYear} onChange={(e) => update('vehicleYear', e.target.value)} required /></label>
             <label>Make<input value={form.vehicleMake} onChange={(e) => update('vehicleMake', e.target.value)} required /></label>
             <label>Model<input value={form.vehicleModel} onChange={(e) => update('vehicleModel', e.target.value)} required /></label>
-            <label>VIN optional<input value={form.vin} onChange={(e) => update('vin', e.target.value)} /></label>
+            <label>VIN<input value={form.vin} onChange={(e) => update('vin', e.target.value)} required /></label>
             <label>Mileage optional<input value={form.mileage} onChange={(e) => update('mileage', e.target.value)} /></label>
           </div>
         </div>
@@ -105,6 +106,15 @@ export default function PublicEstimateForm() {
           <h2>Photos</h2>
           <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} required />
           <div className="photo-row">{files.map((file) => <img key={file.name} src={URL.createObjectURL(file)} alt={file.name} />)}</div>
+        </div>
+
+        <div className="form-section">
+          <h2>Rental Vehicle</h2>
+          <label className="checkbox-line">
+            <input type="checkbox" checked={form.rentalVehicleInterest} onChange={(e) => update('rentalVehicleInterest', e.target.checked)} />
+            I am interested in a rental vehicle while my car is being repaired.
+          </label>
+          {form.rentalVehicleInterest ? <p className="muted">If you plan on having your vehicle worked on, you can book a rental at rentmect.com. Car Craft can help coordinate having it brought to the shop for you.</p> : null}
         </div>
 
         <button className="primary-btn" disabled={status === 'saving'}>{status === 'saving' ? 'Submitting...' : 'Submit Estimate Request'}</button>

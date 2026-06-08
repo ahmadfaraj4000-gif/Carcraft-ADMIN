@@ -51,6 +51,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <div className="command-topline">
                 <h3>{lead.name}</h3>
                 <span className={`status-pill status-${lead.status}`}>{statusLabel(lead.status)}</span>
+                {lead.rentalVehicleInterest ? <span className="status-pill status-follow_up_needed">Rental interested</span> : null}
               </div>
               <p className="muted">{lead.phone} · {lead.email} · {lead.vehicle || 'Vehicle not listed'}</p>
               <p>{lead.damageArea} · {lead.damageType} · Severity: {lead.severity}</p>
@@ -84,6 +85,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <div><strong>Mileage</strong><span>{selected.mileage || '-'}</span></div>
               <div><strong>Damage</strong><span>{selected.damageArea} · {selected.damageType}</span></div>
               <div><strong>Submitted</strong><span>{fmt(selected.createdAt)}</span></div>
+              <div><strong>Rental Vehicle</strong><span>{selected.rentalVehicleInterest ? 'Interested in a RentMect rental' : 'Not requested'}</span></div>
             </div>
             <p className="note-box">{selected.description}</p>
             <div className="photo-grid">{(selected.photos || []).map((photo) => <img key={photo.storageId} src={photo.url} alt={photo.name || 'Damage photo'} />)}</div>

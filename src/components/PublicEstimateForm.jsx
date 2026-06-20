@@ -16,6 +16,7 @@ const initial = {
   severity: 'moderate',
   description: '',
   rentalVehicleInterest: false,
+  towAssistanceInterest: false,
   preferredContactMethod: 'phone'
 }
 
@@ -109,12 +110,16 @@ export default function PublicEstimateForm() {
         </div>
 
         <div className="form-section">
-          <h2>Rental Vehicle</h2>
+          <h2>Additional Help</h2>
           <label className="checkbox-line">
             <input type="checkbox" checked={form.rentalVehicleInterest} onChange={(e) => update('rentalVehicleInterest', e.target.checked)} />
-            I am interested in a rental vehicle while my car is being repaired.
+            I need rental assistance while my car is being repaired.
           </label>
-          {form.rentalVehicleInterest ? <p className="muted">If you plan on having your vehicle worked on, you can book a rental at rentmect.com. Car Craft can help coordinate having it brought to the shop for you.</p> : null}
+          <label className="checkbox-line">
+            <input type="checkbox" checked={form.towAssistanceInterest} onChange={(e) => update('towAssistanceInterest', e.target.checked)} />
+            I need a tow for my vehicle.
+          </label>
+          {form.rentalVehicleInterest ? <p className="muted">Car Craft can help arrange a rental vehicle around your repair and vehicle drop-off.</p> : null}
         </div>
 
         <button className="primary-btn" disabled={status === 'saving'}>{status === 'saving' ? 'Submitting...' : 'Submit Estimate Request'}</button>

@@ -58,7 +58,8 @@ export default function Appointments({ appointments = [], search = '' }) {
               </div>
               <p className="muted">{appt.appointmentDate} at {appt.appointmentTime} · {appt.phone}</p>
               <p>{appt.vehicle || 'Vehicle not listed'} · {appt.serviceRequested}</p>
-              {appt.rentalVehicleInterest ? <p className="muted">Rental vehicle requested through RentMect coordination.</p> : null}
+              {appt.rentalVehicleInterest ? <p className="muted">Rental assistance requested.</p> : null}
+              {appt.towAssistanceInterest ? <p className="muted">Tow assistance requested.</p> : null}
             </div>
             <div className="quick-actions">
               <select value={appt.status} onChange={(e) => updateAppointment({ id: appt._id, status: e.target.value })}>
@@ -74,7 +75,8 @@ export default function Appointments({ appointments = [], search = '' }) {
         <div className="modal-backdrop" onClick={() => setEditing(null)}>
           <div className="modal-card" onClick={(event) => event.stopPropagation()}>
             <div className="modal-header"><h2>{editing.name}</h2><button className="ghost-btn" onClick={() => setEditing(null)}>Close</button></div>
-            {editing.rentalVehicleInterest ? <div className="note-box">Customer is interested in a rental vehicle. They were told they can book at rentmect.com and Car Craft can help coordinate having it brought to the shop.</div> : null}
+            {editing.rentalVehicleInterest ? <div className="note-box">Customer requested rental assistance. Car Craft can help arrange a rental around their repair and vehicle drop-off.</div> : null}
+            {editing.towAssistanceInterest ? <div className="note-box">Customer requested tow assistance for their vehicle.</div> : null}
             <div className="notes-list">{editing.notes?.map((note) => <p key={note.createdAt}>{note.body}</p>)}</div>
             <textarea placeholder="Add status or repair note" onBlur={(e) => e.target.value && updateAppointment({ id: editing._id, note: e.target.value })} />
           </div>

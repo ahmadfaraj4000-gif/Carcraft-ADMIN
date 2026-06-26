@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import fallbackVehicleImage from '../assets/images/branding/carcraft-storefront.png'
@@ -24,10 +24,14 @@ const emptyVehicle = {
 export default function InventoryManager({ vehicles = [], search = '', stats }) {
   const saveVehicle = useMutation(api.inventory.save)
   const archiveVehicle = useMutation(api.inventory.archive)
+  const deleteVehicle = useMutation(api.inventory.remove)
+  const deleteVehicles = useMutation(api.inventory.removeMany)
   const getUploadUrl = useMutation(api.inventory.generateUploadUrl)
   const [form, setForm] = useState(emptyVehicle)
   const [files, setFiles] = useState([])
   const [saving, setSaving] = useState(false)
+  const [selectedIds, setSelectedIds] = useState(() => new Set())
+  const [deleting, setDeleting] = useState(false)
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -36,6 +40,16 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
       car.year, car.make, car.model, car.price, car.status, car.titleStatus, car.color
     ].filter(Boolean).join(' ').toLowerCase().includes(term))
   }, [vehicles, search])
+
+  const allVisibleSelected = rows.length > 0 && rows.every((car) => selectedIds.has(car._id))
+
+  useEffect(() => {
+    setSelectedIds((current) => {
+      const validIds = new Set(vehicles.map((car) => car._id))
+      const next = new Set([...current].filter((id) => validIds.has(id)))
+      return next.size === current.size ? current : next
+    })
+  }, [vehicles])
 
   function set(key, value) {
     setForm((current) => ({ ...current, [key]: value }))
@@ -100,6 +114,59 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
     })
   }
 
+  function toggleVehicleSelection(id) {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (next.has(id)) {
+        next.delete(id)
+      } else {
+        next.add(id)
+      }
+      return next
+    })
+  }
+
+  function toggleSelectAllVisible() {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      if (allVisibleSelected) {
+        rows.forEach((car) => next.delete(car._id))
+      } else {
+        rows.forEach((car) => next.add(car._id))
+      }
+      return next
+    })
+  }
+
+  async function permanentlyDeleteVehicle(car) {
+    const title = `${car.year} ${car.make} ${car.model}`.trim()
+    if (!window.confirm(`Permanently delete ${title || 'this vehicle'} from CarCraft inventory and Convex? This cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      await deleteVehicle({ id: car._id })
+      setSelectedIds((current) => {
+        const next = new Set(current)
+        next.delete(car._id)
+        return next
+      })
+    } finally {
+      setDeleting(false)
+    }
+  }
+
+  async function permanentlyDeleteSelected() {
+    const ids = [...selectedIds]
+    if (!ids.length) return
+    if (!window.confirm(`Permanently delete ${ids.length} selected vehicle${ids.length === 1 ? '' : 's'} from CarCraft inventory and Convex? This cannot be undone.`)) return
+    setDeleting(true)
+    try {
+      await deleteVehicles({ ids })
+      setSelectedIds(new Set())
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <section className="inventory-module">
       <section className="stats-grid compact">
@@ -123,9 +190,41 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
         <button className="primary-btn" disabled={saving}>{saving ? 'Saving...' : 'Save Vehicle'}</button>
       </form>
 
+      <div className="inventory-bulk-toolbar">
+        <label className="checkbox-line select-all-line">
+          <input
+            type="checkbox"
+            checked={allVisibleSelected}
+            disabled={!rows.length || deleting}
+            onChange={toggleSelectAllVisible}
+          />
+          Select all visible
+        </label>
+        <div className="bulk-actions">
+          <span className="muted">{selectedIds.size} selected</span>
+          <button
+            className="delete-btn small"
+            type="button"
+            disabled={!selectedIds.size || deleting}
+            onClick={permanentlyDeleteSelected}
+          >
+            {deleting ? 'Deleting...' : selectedIds.size === rows.length && rows.length ? 'Delete All Selected' : 'Delete Selected'}
+          </button>
+        </div>
+      </div>
+
       <div className="inventory-admin-grid">
         {rows.map((car) => (
-          <article className="inventory-admin-card" key={car._id}>
+          <article className={`inventory-admin-card${selectedIds.has(car._id) ? ' selected' : ''}`} key={car._id}>
+            <label className="vehicle-select">
+              <input
+                type="checkbox"
+                checked={selectedIds.has(car._id)}
+                disabled={deleting}
+                onChange={() => toggleVehicleSelection(car._id)}
+              />
+              <span>Select vehicle</span>
+            </label>
             <img src={car.photos?.[0]?.url || fallbackVehicleImage} alt={`${car.year} ${car.make} ${car.model}`} />
             <div>
               <div className="command-topline"><h3>{car.year} {car.make} {car.model}</h3><span className={`status-pill status-${car.status}`}>{car.status.replaceAll('_', ' ')}</span></div>
@@ -160,6 +259,7 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
                   <button className="ghost-btn small" onClick={() => updateVehicleStatus(car, 'coming_soon')}>Coming Soon</button>
                 ) : null}
                 <button className="delete-btn small" onClick={() => archiveVehicle({ id: car._id })}>Archive</button>
+                <button className="delete-btn small" disabled={deleting} onClick={() => permanentlyDeleteVehicle(car)}>Delete</button>
               </div>
             </div>
           </article>

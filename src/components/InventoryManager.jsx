@@ -32,6 +32,7 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
   const [saving, setSaving] = useState(false)
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [deleting, setDeleting] = useState(false)
+  const [deleteDialog, setDeleteDialog] = useState(null)
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -138,30 +139,42 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
     })
   }
 
-  async function permanentlyDeleteVehicle(car) {
+  function requestDeleteVehicle(car) {
     const title = `${car.year} ${car.make} ${car.model}`.trim()
-    if (!window.confirm(`Permanently delete ${title || 'this vehicle'} from CarCraft inventory and Convex? This cannot be undone.`)) return
-    setDeleting(true)
-    try {
-      await deleteVehicle({ id: car._id })
-      setSelectedIds((current) => {
-        const next = new Set(current)
-        next.delete(car._id)
-        return next
-      })
-    } finally {
-      setDeleting(false)
-    }
+    setDeleteDialog({
+      type: 'single',
+      title: title || 'this vehicle',
+      ids: [car._id],
+      count: 1
+    })
   }
 
-  async function permanentlyDeleteSelected() {
+  function requestDeleteSelected() {
     const ids = [...selectedIds]
     if (!ids.length) return
-    if (!window.confirm(`Permanently delete ${ids.length} selected vehicle${ids.length === 1 ? '' : 's'} from CarCraft inventory and Convex? This cannot be undone.`)) return
+    setDeleteDialog({
+      type: 'bulk',
+      title: `${ids.length} selected vehicle${ids.length === 1 ? '' : 's'}`,
+      ids,
+      count: ids.length
+    })
+  }
+
+  async function confirmPermanentDelete() {
+    if (!deleteDialog) return
     setDeleting(true)
     try {
-      await deleteVehicles({ ids })
-      setSelectedIds(new Set())
+      if (deleteDialog.type === 'single') {
+        await deleteVehicle({ id: deleteDialog.ids[0] })
+      } else {
+        await deleteVehicles({ ids: deleteDialog.ids })
+      }
+      setSelectedIds((current) => {
+        const next = new Set(current)
+        deleteDialog.ids.forEach((id) => next.delete(id))
+        return next
+      })
+      setDeleteDialog(null)
     } finally {
       setDeleting(false)
     }
@@ -206,7 +219,7 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
             className="delete-btn small"
             type="button"
             disabled={!selectedIds.size || deleting}
-            onClick={permanentlyDeleteSelected}
+            onClick={requestDeleteSelected}
           >
             {deleting ? 'Deleting...' : selectedIds.size === rows.length && rows.length ? 'Delete All Selected' : 'Delete Selected'}
           </button>
@@ -259,12 +272,36 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
                   <button className="ghost-btn small" onClick={() => updateVehicleStatus(car, 'coming_soon')}>Coming Soon</button>
                 ) : null}
                 <button className="delete-btn small" onClick={() => archiveVehicle({ id: car._id })}>Archive</button>
-                <button className="delete-btn small" disabled={deleting} onClick={() => permanentlyDeleteVehicle(car)}>Delete</button>
+                <button className="delete-btn small" disabled={deleting} onClick={() => requestDeleteVehicle(car)}>Delete</button>
               </div>
             </div>
           </article>
         ))}
       </div>
+
+      {deleteDialog ? (
+        <div className="modal-backdrop" onClick={() => !deleting && setDeleteDialog(null)}>
+          <div className="modal-card delete-confirm-card" onClick={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Permanent Delete</p>
+                <h2>Remove inventory record?</h2>
+              </div>
+              <button className="ghost-btn" type="button" disabled={deleting} onClick={() => setDeleteDialog(null)}>Close</button>
+            </div>
+            <div className="delete-confirm-body">
+              <strong>{deleteDialog.title}</strong>
+              <p>This will permanently remove {deleteDialog.count === 1 ? 'this car' : 'these cars'} from the admin portal and the CarCraft Convex database. This cannot be undone.</p>
+            </div>
+            <div className="modal-actions">
+              <button className="ghost-btn" type="button" disabled={deleting} onClick={() => setDeleteDialog(null)}>Keep Inventory</button>
+              <button className="delete-btn danger-fill" type="button" disabled={deleting} onClick={confirmPermanentDelete}>
+                {deleting ? 'Deleting...' : deleteDialog.count === 1 ? 'Delete Car' : `Delete ${deleteDialog.count} Cars`}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </section>
   )
 }

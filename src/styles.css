@@ -104,6 +104,11 @@ button:disabled, input:disabled { cursor: not-allowed; opacity: .58; }
 .modal-card { width: min(720px, 100%); max-height: 92vh; overflow: auto; padding: 20px; display: grid; gap: 14px; }
 .modal-card.wide { width: min(1080px, 100%); }
 .modal-header, .modal-actions { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.delete-confirm-card { width: min(540px, 100%); border-color: rgba(239,68,68,.35); box-shadow: 0 24px 80px rgba(0,0,0,.46), 0 0 0 1px rgba(213,43,30,.18); }
+.delete-confirm-body { display: grid; gap: 8px; padding: 16px; border: 1px solid rgba(239,68,68,.25); border-radius: 12px; background: linear-gradient(180deg, rgba(213,43,30,.14), rgba(255,255,255,.035)); }
+.delete-confirm-body strong { color: var(--text); font-size: 18px; }
+.delete-confirm-body p { margin: 0; color: var(--muted); line-height: 1.65; }
+.danger-fill { border-color: transparent; color: white; background: linear-gradient(180deg, #ef4444, #b91c1c); font-weight: 900; }
 .detail-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .detail-grid div, .note-box, .notes-list p { border: 1px solid var(--border); background: rgba(255,255,255,.04); border-radius: 10px; padding: 12px; }
 .detail-grid strong, .detail-grid span { display: block; }

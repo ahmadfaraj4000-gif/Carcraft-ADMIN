@@ -15,7 +15,7 @@ function Router() {
         <div className="auth-card">
           <p className="eyebrow">Configuration Needed</p>
           <h1>Set VITE_CONVEX_URL</h1>
-          <p className="muted">Run Convex setup and add your deployment URL to `.env.local`.</p>
+          <p className="muted">Add the admin deployment URL to `.env.local`.</p>
         </div>
       </div>
     )

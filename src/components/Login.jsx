@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useAuthActions } from '@convex-dev/auth/react'
+import logoUrl from '../assets/images/branding/carcraft-logo.png'
 
 export default function Login() {
   const { signIn } = useAuthActions()
@@ -24,9 +25,9 @@ export default function Login() {
   return (
     <section className="auth-shell">
       <form className="auth-card" onSubmit={submit}>
-        <p className="eyebrow">Car Craft Autobody</p>
-        <h1>Admin Portal</h1>
-        <p className="muted">Sign in with Convex Auth to manage estimates, appointments, customers, and inventory.</p>
+        <img className="auth-logo" src={logoUrl} alt="Car Craft Autobody" />
+        <p className="eyebrow">Admin Portal</p>
+        <h1>Sign in</h1>
         {error ? <div className="error-box">{error}</div> : null}
         <label>Email<input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required /></label>
         <label>Password<input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required /></label>

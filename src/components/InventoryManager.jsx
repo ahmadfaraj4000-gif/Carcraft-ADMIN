@@ -291,7 +291,7 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
             </div>
             <div className="delete-confirm-body">
               <strong>{deleteDialog.title}</strong>
-              <p>This will permanently remove {deleteDialog.count === 1 ? 'this car' : 'these cars'} from the admin portal and the CarCraft Convex database. This cannot be undone.</p>
+              <p>This will permanently remove {deleteDialog.count === 1 ? 'this car' : 'these cars'} from the admin portal and database. This cannot be undone.</p>
             </div>
             <div className="modal-actions">
               <button className="ghost-btn" type="button" disabled={deleting} onClick={() => setDeleteDialog(null)}>Keep Inventory</button>

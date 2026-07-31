@@ -1,9 +1,11 @@
 import { getAuthUserId } from '@convex-dev/auth/server'
 import { internalMutation, mutation, query } from './_generated/server'
-import { v } from 'convex/values'
+import { internal } from './_generated/api'
+import { ConvexError, v } from 'convex/values'
 
 const SESSION_LIFETIME_MS = 180 * 24 * 60 * 60 * 1000
-const DUPLICATE_WINDOW_MS = 30 * 1000
+const DEFAULT_LUNCH_MINUTES = 60
+const SETTINGS_KEY = 'default'
 const eventType = v.union(
   v.literal('clock_in'),
   v.literal('lunch_start'),
@@ -72,6 +74,17 @@ async function latestEmployeeEvent(ctx: any, employeeId: any) {
     .first()
 }
 
+async function getSettings(ctx: any) {
+  const settings = await ctx.db
+    .query('timeClockSettings')
+    .withIndex('by_key', (q: any) => q.eq('key', SETTINGS_KEY))
+    .unique()
+  return settings || {
+    automaticLunchEndEnabled: false,
+    automaticLunchMinutes: DEFAULT_LUNCH_MINUTES
+  }
+}
+
 export const getClockState = query({
   args: {
     tagCode: v.string(),
@@ -92,12 +105,16 @@ export const getClockState = query({
 
     const latest = await latestEmployeeEvent(ctx, identity.employee._id)
     const clockState = stateAfter(latest?.eventType)
+    const settings = await getSettings(ctx)
     return {
       status: 'ready' as const,
       locationName: location.name,
       employeeName: identity.employee.name,
       clockState,
       validActions: validActions(clockState),
+      automaticLunchEndAt: clockState === 'on_lunch' && settings.automaticLunchEndEnabled
+        ? latest.occurredAt + settings.automaticLunchMinutes * 60 * 1000
+        : null,
       lastEvent: latest ? { eventType: latest.eventType, occurredAt: latest.occurredAt } : null
     }
   }
@@ -111,9 +128,9 @@ export const enrollDevice = mutation({
   },
   handler: async (ctx, args) => {
     const location = await locationForTag(ctx, args.tagCode)
-    if (!location) throw new Error('This clock tag is not active.')
+    if (!location) throw new ConvexError('This clock tag is not active.')
     if (args.sessionToken.length < 32 || args.enrollmentCodeHash.length !== 64) {
-      throw new Error('Invalid enrollment information.')
+      throw new ConvexError('Invalid enrollment information.')
     }
 
     const now = Date.now()
@@ -122,7 +139,7 @@ export const enrollDevice = mutation({
       row.enrollmentCodeHash === args.enrollmentCodeHash &&
       Boolean(row.enrollmentCodeExpiresAt && row.enrollmentCodeExpiresAt > now)
     )
-    if (!employee) throw new Error('That enrollment code is invalid or expired.')
+    if (!employee) throw new ConvexError('That enrollment code is invalid or expired.')
 
     const tokenHash = await sha256(args.sessionToken)
     const existing = await ctx.db
@@ -159,20 +176,16 @@ export const recordEvent = mutation({
       locationForTag(ctx, args.tagCode),
       sessionForToken(ctx, args.sessionToken)
     ])
-    if (!location) throw new Error('This clock tag is not active.')
-    if (!identity) throw new Error('This phone is no longer enrolled. Ask a manager for a new code.')
+    if (!location) throw new ConvexError('This clock tag is not active.')
+    if (!identity) throw new ConvexError('This phone is no longer enrolled. Ask a manager for a new code.')
 
     const latest = await latestEmployeeEvent(ctx, identity.employee._id)
     const clockState = stateAfter(latest?.eventType)
     if (!validActions(clockState).includes(args.eventType)) {
-      throw new Error('That action is not available for your current clock status.')
+      throw new ConvexError('That action is not available for your current clock status.')
     }
 
     const now = Date.now()
-    if (latest && now - latest.occurredAt < DUPLICATE_WINDOW_MS) {
-      throw new Error('That was already recorded. Please wait a moment before trying again.')
-    }
-
     const eventId = await ctx.db.insert('timeClockEvents', {
       employeeId: identity.employee._id,
       eventType: args.eventType,
@@ -183,7 +196,55 @@ export const recordEvent = mutation({
       createdAt: now
     })
     await ctx.db.patch(identity.session._id, { lastSeenAt: now })
-    return { eventId, employeeName: identity.employee.name, eventType: args.eventType, occurredAt: now }
+    let automaticLunchEndAt = null
+    if (args.eventType === 'lunch_start') {
+      const settings = await getSettings(ctx)
+      if (settings.automaticLunchEndEnabled) {
+        automaticLunchEndAt = now + settings.automaticLunchMinutes * 60 * 1000
+        await ctx.scheduler.runAfter(
+          settings.automaticLunchMinutes * 60 * 1000,
+          internal.timeClock.automaticLunchEnd,
+          { lunchStartEventId: eventId, automaticLunchMinutes: settings.automaticLunchMinutes }
+        )
+      }
+    }
+    return { eventId, employeeName: identity.employee.name, eventType: args.eventType, occurredAt: now, automaticLunchEndAt }
+  }
+})
+
+export const automaticLunchEnd = internalMutation({
+  args: {
+    lunchStartEventId: v.id('timeClockEvents'),
+    automaticLunchMinutes: v.number()
+  },
+  handler: async (ctx, args) => {
+    const [lunchStart, settings] = await Promise.all([
+      ctx.db.get(args.lunchStartEventId),
+      getSettings(ctx)
+    ])
+    if (!lunchStart || lunchStart.eventType !== 'lunch_start') return
+    if (!settings.automaticLunchEndEnabled || settings.automaticLunchMinutes !== args.automaticLunchMinutes) return
+
+    const latest = await latestEmployeeEvent(ctx, lunchStart.employeeId)
+    if (!latest || latest._id !== lunchStart._id || latest.eventType !== 'lunch_start') return
+
+    const dueAt = lunchStart.occurredAt + args.automaticLunchMinutes * 60 * 1000
+    if (Date.now() < dueAt) {
+      await ctx.scheduler.runAfter(dueAt - Date.now(), internal.timeClock.automaticLunchEnd, args)
+      return
+    }
+
+    const now = Date.now()
+    await ctx.db.insert('timeClockEvents', {
+      employeeId: lunchStart.employeeId,
+      eventType: 'lunch_end',
+      occurredAt: now,
+      locationId: lunchStart.locationId,
+      sessionId: lunchStart.sessionId,
+      source: 'admin',
+      note: `Lunch ended automatically after ${args.automaticLunchMinutes} minutes.`,
+      createdAt: now
+    })
   }
 })
 
@@ -199,10 +260,11 @@ export const adminDashboard = query({
   args: {},
   handler: async (ctx) => {
     await requireAdmin(ctx)
-    const [employees, locations, events] = await Promise.all([
+    const [employees, locations, events, settings] = await Promise.all([
       ctx.db.query('timeClockEmployees').order('asc').collect(),
       ctx.db.query('timeClockLocations').order('asc').collect(),
-      ctx.db.query('timeClockEvents').withIndex('by_time').order('desc').take(250)
+      ctx.db.query('timeClockEvents').withIndex('by_time').order('desc').take(250),
+      getSettings(ctx)
     ])
 
     const employeeById = new Map(employees.map((employee) => [String(employee._id), employee]))
@@ -224,11 +286,57 @@ export const adminDashboard = query({
         }
       }),
       locations,
+      settings: {
+        automaticLunchEndEnabled: settings.automaticLunchEndEnabled,
+        automaticLunchMinutes: settings.automaticLunchMinutes
+      },
       events: events.map((event) => ({
         ...event,
         employeeName: employeeById.get(String(event.employeeId))?.name || 'Unknown employee',
         locationName: locationById.get(String(event.locationId))?.name || 'Unknown location'
       }))
+    }
+  }
+})
+
+export const updateLunchSettings = mutation({
+  args: {
+    automaticLunchEndEnabled: v.boolean(),
+    automaticLunchMinutes: v.number()
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAdmin(ctx)
+    const minutes = Math.round(args.automaticLunchMinutes)
+    if (minutes < 15 || minutes > 180) throw new Error('Automatic lunch must be between 15 and 180 minutes.')
+
+    const existing = await ctx.db
+      .query('timeClockSettings')
+      .withIndex('by_key', (q) => q.eq('key', SETTINGS_KEY))
+      .unique()
+    const payload = {
+      automaticLunchEndEnabled: args.automaticLunchEndEnabled,
+      automaticLunchMinutes: minutes,
+      updatedAt: Date.now(),
+      updatedBy: userId
+    }
+    if (existing) {
+      await ctx.db.patch(existing._id, payload)
+    } else {
+      await ctx.db.insert('timeClockSettings', { key: SETTINGS_KEY, ...payload })
+    }
+
+    if (args.automaticLunchEndEnabled) {
+      const employees = await ctx.db.query('timeClockEmployees').withIndex('by_active', (q) => q.eq('active', true)).collect()
+      for (const employee of employees) {
+        const latest = await latestEmployeeEvent(ctx, employee._id)
+        if (!latest || latest.eventType !== 'lunch_start') continue
+        const dueAt = latest.occurredAt + minutes * 60 * 1000
+        await ctx.scheduler.runAfter(
+          Math.max(0, dueAt - Date.now()),
+          internal.timeClock.automaticLunchEnd,
+          { lunchStartEventId: latest._id, automaticLunchMinutes: minutes }
+        )
+      }
     }
   }
 })

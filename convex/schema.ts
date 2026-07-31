@@ -131,5 +131,45 @@ export default defineSchema({
     name: v.optional(v.string()),
     url: v.optional(v.string()),
     createdAt: v.number()
-  }).index('by_owner', ['ownerType', 'ownerId'])
+  }).index('by_owner', ['ownerType', 'ownerId']),
+  timeClockEmployees: defineTable({
+    name: v.string(),
+    active: v.boolean(),
+    enrollmentCodeHash: v.optional(v.string()),
+    enrollmentCodeExpiresAt: v.optional(v.number()),
+    createdAt: v.number(),
+    updatedAt: v.number()
+  }).index('by_active', ['active']),
+  timeClockLocations: defineTable({
+    name: v.string(),
+    tagCode: v.string(),
+    active: v.boolean(),
+    createdAt: v.number(),
+    updatedAt: v.number()
+  }).index('by_tag_code', ['tagCode']),
+  timeClockSessions: defineTable({
+    employeeId: v.id('timeClockEmployees'),
+    tokenHash: v.string(),
+    active: v.boolean(),
+    createdAt: v.number(),
+    lastSeenAt: v.number(),
+    expiresAt: v.number()
+  }).index('by_token_hash', ['tokenHash']).index('by_employee', ['employeeId']),
+  timeClockEvents: defineTable({
+    employeeId: v.id('timeClockEmployees'),
+    eventType: v.union(
+      v.literal('clock_in'),
+      v.literal('lunch_start'),
+      v.literal('lunch_end'),
+      v.literal('clock_out')
+    ),
+    occurredAt: v.number(),
+    locationId: v.id('timeClockLocations'),
+    sessionId: v.optional(v.id('timeClockSessions')),
+    source: v.union(v.literal('nfc'), v.literal('admin')),
+    note: v.optional(v.string()),
+    createdAt: v.number()
+  })
+    .index('by_employee_time', ['employeeId', 'occurredAt'])
+    .index('by_time', ['occurredAt'])
 })

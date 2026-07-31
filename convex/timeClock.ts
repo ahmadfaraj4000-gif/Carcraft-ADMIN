@@ -1,0 +1,307 @@
+import { getAuthUserId } from '@convex-dev/auth/server'
+import { internalMutation, mutation, query } from './_generated/server'
+import { v } from 'convex/values'
+
+const SESSION_LIFETIME_MS = 180 * 24 * 60 * 60 * 1000
+const DUPLICATE_WINDOW_MS = 30 * 1000
+const eventType = v.union(
+  v.literal('clock_in'),
+  v.literal('lunch_start'),
+  v.literal('lunch_end'),
+  v.literal('clock_out')
+)
+
+type ClockEvent = 'clock_in' | 'lunch_start' | 'lunch_end' | 'clock_out'
+
+function cleanCode(value: string) {
+  return value.trim().toLowerCase()
+}
+
+async function sha256(value: string) {
+  const bytes = new TextEncoder().encode(value)
+  const digest = await crypto.subtle.digest('SHA-256', bytes)
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('')
+}
+
+function stateAfter(event?: ClockEvent) {
+  if (!event || event === 'clock_out') return 'off_shift' as const
+  if (event === 'lunch_start') return 'on_lunch' as const
+  return 'working' as const
+}
+
+function validActions(state: ReturnType<typeof stateAfter>): ClockEvent[] {
+  if (state === 'off_shift') return ['clock_in']
+  if (state === 'on_lunch') return ['lunch_end']
+  return ['lunch_start', 'clock_out']
+}
+
+async function requireAdmin(ctx: any) {
+  const userId = await getAuthUserId(ctx)
+  if (!userId) throw new Error('Admin authentication required')
+  return userId
+}
+
+async function locationForTag(ctx: any, tagCode: string) {
+  const code = cleanCode(tagCode)
+  if (!code || code.length < 16) return null
+  const location = await ctx.db
+    .query('timeClockLocations')
+    .withIndex('by_tag_code', (q: any) => q.eq('tagCode', code))
+    .unique()
+  return location?.active ? location : null
+}
+
+async function sessionForToken(ctx: any, sessionToken: string) {
+  if (!sessionToken || sessionToken.length < 32) return null
+  const tokenHash = await sha256(sessionToken)
+  const session = await ctx.db
+    .query('timeClockSessions')
+    .withIndex('by_token_hash', (q: any) => q.eq('tokenHash', tokenHash))
+    .unique()
+  if (!session || !session.active || session.expiresAt <= Date.now()) return null
+  const employee = await ctx.db.get(session.employeeId)
+  if (!employee?.active) return null
+  return { session, employee }
+}
+
+async function latestEmployeeEvent(ctx: any, employeeId: any) {
+  return ctx.db
+    .query('timeClockEvents')
+    .withIndex('by_employee_time', (q: any) => q.eq('employeeId', employeeId))
+    .order('desc')
+    .first()
+}
+
+export const getClockState = query({
+  args: {
+    tagCode: v.string(),
+    sessionToken: v.optional(v.string())
+  },
+  handler: async (ctx, { tagCode, sessionToken }) => {
+    const location = await locationForTag(ctx, tagCode)
+    if (!location) return { status: 'invalid_tag' as const }
+
+    if (!sessionToken) {
+      return { status: 'enrollment_required' as const, locationName: location.name }
+    }
+
+    const identity = await sessionForToken(ctx, sessionToken)
+    if (!identity) {
+      return { status: 'enrollment_required' as const, locationName: location.name }
+    }
+
+    const latest = await latestEmployeeEvent(ctx, identity.employee._id)
+    const clockState = stateAfter(latest?.eventType)
+    return {
+      status: 'ready' as const,
+      locationName: location.name,
+      employeeName: identity.employee.name,
+      clockState,
+      validActions: validActions(clockState),
+      lastEvent: latest ? { eventType: latest.eventType, occurredAt: latest.occurredAt } : null
+    }
+  }
+})
+
+export const enrollDevice = mutation({
+  args: {
+    tagCode: v.string(),
+    enrollmentCodeHash: v.string(),
+    sessionToken: v.string()
+  },
+  handler: async (ctx, args) => {
+    const location = await locationForTag(ctx, args.tagCode)
+    if (!location) throw new Error('This clock tag is not active.')
+    if (args.sessionToken.length < 32 || args.enrollmentCodeHash.length !== 64) {
+      throw new Error('Invalid enrollment information.')
+    }
+
+    const now = Date.now()
+    const employees = await ctx.db.query('timeClockEmployees').withIndex('by_active', (q) => q.eq('active', true)).collect()
+    const employee = employees.find((row) =>
+      row.enrollmentCodeHash === args.enrollmentCodeHash &&
+      Boolean(row.enrollmentCodeExpiresAt && row.enrollmentCodeExpiresAt > now)
+    )
+    if (!employee) throw new Error('That enrollment code is invalid or expired.')
+
+    const tokenHash = await sha256(args.sessionToken)
+    const existing = await ctx.db
+      .query('timeClockSessions')
+      .withIndex('by_token_hash', (q) => q.eq('tokenHash', tokenHash))
+      .unique()
+    if (existing) await ctx.db.delete(existing._id)
+
+    await ctx.db.insert('timeClockSessions', {
+      employeeId: employee._id,
+      tokenHash,
+      active: true,
+      createdAt: now,
+      lastSeenAt: now,
+      expiresAt: now + SESSION_LIFETIME_MS
+    })
+    await ctx.db.patch(employee._id, {
+      enrollmentCodeHash: undefined,
+      enrollmentCodeExpiresAt: undefined,
+      updatedAt: now
+    })
+    return { employeeName: employee.name }
+  }
+})
+
+export const recordEvent = mutation({
+  args: {
+    tagCode: v.string(),
+    sessionToken: v.string(),
+    eventType
+  },
+  handler: async (ctx, args) => {
+    const [location, identity] = await Promise.all([
+      locationForTag(ctx, args.tagCode),
+      sessionForToken(ctx, args.sessionToken)
+    ])
+    if (!location) throw new Error('This clock tag is not active.')
+    if (!identity) throw new Error('This phone is no longer enrolled. Ask a manager for a new code.')
+
+    const latest = await latestEmployeeEvent(ctx, identity.employee._id)
+    const clockState = stateAfter(latest?.eventType)
+    if (!validActions(clockState).includes(args.eventType)) {
+      throw new Error('That action is not available for your current clock status.')
+    }
+
+    const now = Date.now()
+    if (latest && now - latest.occurredAt < DUPLICATE_WINDOW_MS) {
+      throw new Error('That was already recorded. Please wait a moment before trying again.')
+    }
+
+    const eventId = await ctx.db.insert('timeClockEvents', {
+      employeeId: identity.employee._id,
+      eventType: args.eventType,
+      occurredAt: now,
+      locationId: location._id,
+      sessionId: identity.session._id,
+      source: 'nfc',
+      createdAt: now
+    })
+    await ctx.db.patch(identity.session._id, { lastSeenAt: now })
+    return { eventId, employeeName: identity.employee.name, eventType: args.eventType, occurredAt: now }
+  }
+})
+
+export const forgetDevice = mutation({
+  args: { sessionToken: v.string() },
+  handler: async (ctx, { sessionToken }) => {
+    const identity = await sessionForToken(ctx, sessionToken)
+    if (identity) await ctx.db.patch(identity.session._id, { active: false, lastSeenAt: Date.now() })
+  }
+})
+
+export const adminDashboard = query({
+  args: {},
+  handler: async (ctx) => {
+    await requireAdmin(ctx)
+    const [employees, locations, events] = await Promise.all([
+      ctx.db.query('timeClockEmployees').order('asc').collect(),
+      ctx.db.query('timeClockLocations').order('asc').collect(),
+      ctx.db.query('timeClockEvents').withIndex('by_time').order('desc').take(250)
+    ])
+
+    const employeeById = new Map(employees.map((employee) => [String(employee._id), employee]))
+    const locationById = new Map(locations.map((location) => [String(location._id), location]))
+    const latestByEmployee = new Map<string, any>()
+    for (const event of events) {
+      const key = String(event.employeeId)
+      if (!latestByEmployee.has(key)) latestByEmployee.set(key, event)
+    }
+
+    return {
+      employees: employees.map((employee) => {
+        const latest = latestByEmployee.get(String(employee._id))
+        return {
+          ...employee,
+          enrollmentPending: Boolean(employee.enrollmentCodeHash && employee.enrollmentCodeExpiresAt && employee.enrollmentCodeExpiresAt > Date.now()),
+          clockState: stateAfter(latest?.eventType),
+          lastEventAt: latest?.occurredAt
+        }
+      }),
+      locations,
+      events: events.map((event) => ({
+        ...event,
+        employeeName: employeeById.get(String(event.employeeId))?.name || 'Unknown employee',
+        locationName: locationById.get(String(event.locationId))?.name || 'Unknown location'
+      }))
+    }
+  }
+})
+
+export const createEmployee = mutation({
+  args: { name: v.string(), enrollmentCodeHash: v.string(), enrollmentCodeExpiresAt: v.number() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx)
+    const name = args.name.trim()
+    if (name.length < 2 || name.length > 80) throw new Error('Enter the employee’s full name.')
+    if (args.enrollmentCodeHash.length !== 64 || args.enrollmentCodeExpiresAt <= Date.now()) {
+      throw new Error('Invalid enrollment code.')
+    }
+    const now = Date.now()
+    return ctx.db.insert('timeClockEmployees', {
+      name,
+      active: true,
+      enrollmentCodeHash: args.enrollmentCodeHash,
+      enrollmentCodeExpiresAt: args.enrollmentCodeExpiresAt,
+      createdAt: now,
+      updatedAt: now
+    })
+  }
+})
+
+export const issueEnrollmentCode = mutation({
+  args: { employeeId: v.id('timeClockEmployees'), enrollmentCodeHash: v.string(), enrollmentCodeExpiresAt: v.number() },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx)
+    if (args.enrollmentCodeHash.length !== 64 || args.enrollmentCodeExpiresAt <= Date.now()) {
+      throw new Error('Invalid enrollment code.')
+    }
+    await ctx.db.patch(args.employeeId, {
+      active: true,
+      enrollmentCodeHash: args.enrollmentCodeHash,
+      enrollmentCodeExpiresAt: args.enrollmentCodeExpiresAt,
+      updatedAt: Date.now()
+    })
+  }
+})
+
+export const setEmployeeActive = mutation({
+  args: { employeeId: v.id('timeClockEmployees'), active: v.boolean() },
+  handler: async (ctx, { employeeId, active }) => {
+    await requireAdmin(ctx)
+    await ctx.db.patch(employeeId, { active, updatedAt: Date.now() })
+    if (!active) {
+      const sessions = await ctx.db
+        .query('timeClockSessions')
+        .withIndex('by_employee', (q) => q.eq('employeeId', employeeId))
+        .collect()
+      for (const session of sessions) await ctx.db.patch(session._id, { active: false })
+    }
+  }
+})
+
+export const seedDefaultLocation = internalMutation({
+  args: { name: v.string(), tagCode: v.string() },
+  handler: async (ctx, args) => {
+    const tagCode = cleanCode(args.tagCode)
+    if (tagCode.length < 16) throw new Error('Tag code must be at least 16 characters.')
+    const existing = await ctx.db
+      .query('timeClockLocations')
+      .withIndex('by_tag_code', (q) => q.eq('tagCode', tagCode))
+      .unique()
+    if (existing) return existing._id
+    const now = Date.now()
+    return ctx.db.insert('timeClockLocations', {
+      name: args.name.trim() || 'Car Craft — West Hartford',
+      tagCode,
+      active: true,
+      createdAt: now,
+      updatedAt: now
+    })
+  }
+})

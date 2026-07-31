@@ -9,6 +9,7 @@ import Appointments from './components/Appointments'
 import CustomerDatabase from './components/CustomerDatabase'
 import InventoryManager from './components/InventoryManager'
 import CalendarView from './components/CalendarView'
+import Payroll from './components/Payroll'
 import logoUrl from './assets/images/branding/carcraft-logo.png'
 
 function Icon({ children }) {
@@ -56,6 +57,12 @@ const icons = {
       <path d="M8 3v4M16 3v4M4 10h16M8 14h2M13 14h3M8 17h2M13 17h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
     </Icon>
   ),
+  payroll: (
+    <Icon>
+      <circle cx="12" cy="12" r="8.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M12 7.5V12l3 2M8.5 3.8 7 2.5M15.5 3.8 17 2.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+    </Icon>
+  ),
   menu: (
     <Icon>
       <path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -75,7 +82,8 @@ const navItems = [
   ['appointments', 'Appointments'],
   ['customers', 'Customers'],
   ['inventory', 'Inventory'],
-  ['calendar', 'Calendar']
+  ['calendar', 'Calendar'],
+  ['payroll', 'Payroll']
 ]
 
 export default function App() {
@@ -84,6 +92,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard')
   const [search, setSearch] = useState('')
   const [navCollapsed, setNavCollapsed] = useState(false)
+  const searchableTabs = ['leads', 'appointments', 'customers', 'inventory']
 
   const leads = useQuery(api.estimateLeads.list) || []
   const appointments = useQuery(api.appointments.list) || []
@@ -148,7 +157,7 @@ export default function App() {
             <p className="eyebrow">Car Craft Autobody</p>
             <h1>{title}</h1>
           </div>
-          {activeTab !== 'dashboard' ? (
+          {searchableTabs.includes(activeTab) ? (
             <input className="search-input" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search name, phone, vehicle, status..." />
           ) : null}
         </header>
@@ -159,6 +168,7 @@ export default function App() {
         {activeTab === 'customers' ? <CustomerDatabase customers={customers} search={search} onDelete={(id) => deleteCustomer({ id })} /> : null}
         {activeTab === 'inventory' ? <InventoryManager vehicles={inventory} search={search} stats={stats} /> : null}
         {activeTab === 'calendar' ? <CalendarView appointments={appointments} /> : null}
+        {activeTab === 'payroll' ? <Payroll /> : null}
       </main>
     </div>
   )

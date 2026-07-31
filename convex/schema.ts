@@ -159,6 +159,19 @@ export default defineSchema({
     key: v.string(),
     automaticLunchEndEnabled: v.boolean(),
     automaticLunchMinutes: v.number(),
+    geofenceEnabled: v.optional(v.boolean()),
+    geofenceAddress: v.optional(v.string()),
+    geofenceLatitude: v.optional(v.number()),
+    geofenceLongitude: v.optional(v.number()),
+    geofenceRadiusMeters: v.optional(v.number()),
+    geofenceMaxAccuracyMeters: v.optional(v.number()),
+    geofencePointAccuracyMeters: v.optional(v.number()),
+    geofenceRequiredActions: v.optional(v.array(v.union(
+      v.literal('clock_in'),
+      v.literal('lunch_start'),
+      v.literal('lunch_end'),
+      v.literal('clock_out')
+    ))),
     updatedAt: v.number(),
     updatedBy: v.optional(v.id('users'))
   }).index('by_key', ['key']),
@@ -175,6 +188,9 @@ export default defineSchema({
     sessionId: v.optional(v.id('timeClockSessions')),
     source: v.union(v.literal('nfc'), v.literal('admin')),
     note: v.optional(v.string()),
+    locationVerified: v.optional(v.boolean()),
+    locationDistanceMeters: v.optional(v.number()),
+    locationAccuracyMeters: v.optional(v.number()),
     createdAt: v.number()
   })
     .index('by_employee_time', ['employeeId', 'occurredAt'])

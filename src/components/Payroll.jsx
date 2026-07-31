@@ -118,6 +118,23 @@ function formatCalendarHours(milliseconds) {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`
 }
 
+function requestBrowserLocation() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('This device does not support location services.'))
+      return
+    }
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
+  })
+}
+
+function locationPermissionMessage(error) {
+  if (error?.code === 1) return 'Location permission was denied. Allow location access for this site in your browser settings and try again.'
+  if (error?.code === 2) return 'Your device could not determine its location. Move near a window or outside and try again.'
+  if (error?.code === 3) return 'Location timed out. Check that Location Services are enabled and try again.'
+  return error?.message || 'The shop location could not be captured.'
+}
+
 export default function Payroll() {
   const dashboard = useQuery(api.timeClock.adminDashboard)
   const [payrollView, setPayrollView] = useState('calendar')
@@ -134,6 +151,7 @@ export default function Payroll() {
   const setEmployeeActive = useMutation(api.timeClock.setEmployeeActive)
   const deleteEmployee = useMutation(api.timeClock.deleteEmployee)
   const updateLunchSettings = useMutation(api.timeClock.updateLunchSettings)
+  const updateGeofenceSettings = useMutation(api.timeClock.updateGeofenceSettings)
   const [employeeName, setEmployeeName] = useState('')
   const [issuedCodes, setIssuedCodes] = useState({})
   const [busyEmployee, setBusyEmployee] = useState('')
@@ -144,6 +162,16 @@ export default function Payroll() {
   const [savingLunchSettings, setSavingLunchSettings] = useState(false)
   const [employeeToDelete, setEmployeeToDelete] = useState(null)
   const [deletingEmployee, setDeletingEmployee] = useState(false)
+  const [geofenceEnabled, setGeofenceEnabled] = useState(false)
+  const [geofenceAddress, setGeofenceAddress] = useState('8 South St, West Hartford, CT 06110')
+  const [geofenceLatitude, setGeofenceLatitude] = useState(null)
+  const [geofenceLongitude, setGeofenceLongitude] = useState(null)
+  const [geofenceRadiusFeet, setGeofenceRadiusFeet] = useState(350)
+  const [geofenceMaxAccuracyFeet, setGeofenceMaxAccuracyFeet] = useState(200)
+  const [geofencePointAccuracyFeet, setGeofencePointAccuracyFeet] = useState(null)
+  const [geofenceRequiredActions, setGeofenceRequiredActions] = useState(['clock_in'])
+  const [capturingShopLocation, setCapturingShopLocation] = useState(false)
+  const [savingGeofence, setSavingGeofence] = useState(false)
 
   const employees = dashboard?.employees || []
   const weeklyEvents = weeklySummary?.events || []
@@ -165,6 +193,18 @@ export default function Payroll() {
     setAutomaticLunchEnabled(dashboard.settings.automaticLunchEndEnabled)
     setAutomaticLunchMinutes(dashboard.settings.automaticLunchMinutes)
   }, [dashboard?.settings?.automaticLunchEndEnabled, dashboard?.settings?.automaticLunchMinutes])
+
+  useEffect(() => {
+    if (!dashboard?.settings) return
+    setGeofenceEnabled(dashboard.settings.geofenceEnabled)
+    setGeofenceAddress(dashboard.settings.geofenceAddress)
+    setGeofenceLatitude(dashboard.settings.geofenceLatitude ?? null)
+    setGeofenceLongitude(dashboard.settings.geofenceLongitude ?? null)
+    setGeofenceRadiusFeet(dashboard.settings.geofenceRadiusFeet)
+    setGeofenceMaxAccuracyFeet(dashboard.settings.geofenceMaxAccuracyFeet)
+    setGeofencePointAccuracyFeet(dashboard.settings.geofencePointAccuracyFeet)
+    setGeofenceRequiredActions(dashboard.settings.geofenceRequiredActions)
+  }, [dashboard?.settings])
 
   useEffect(() => {
     const timer = window.setInterval(() => setClockNow(Date.now()), 60000)
@@ -273,6 +313,55 @@ export default function Payroll() {
       setError(requestError?.data || requestError?.message || 'Lunch settings could not be saved.')
     } finally {
       setSavingLunchSettings(false)
+    }
+  }
+
+  async function captureShopLocation() {
+    setError('')
+    setNotice('')
+    setCapturingShopLocation(true)
+    try {
+      const position = await requestBrowserLocation()
+      setGeofenceLatitude(position.coords.latitude)
+      setGeofenceLongitude(position.coords.longitude)
+      setGeofencePointAccuracyFeet(Math.round(position.coords.accuracy * 3.28084))
+      setNotice('Shop location captured from this device. Review the radius, then save the location policy.')
+    } catch (locationError) {
+      setError(locationPermissionMessage(locationError))
+    } finally {
+      setCapturingShopLocation(false)
+    }
+  }
+
+  function toggleGeofenceActions(actions, enabled) {
+    setGeofenceRequiredActions((current) => {
+      const next = new Set(current)
+      for (const action of actions) enabled ? next.add(action) : next.delete(action)
+      return Array.from(next)
+    })
+  }
+
+  async function saveGeofenceSettings(event) {
+    event.preventDefault()
+    setError('')
+    setNotice('')
+    setSavingGeofence(true)
+    try {
+      await updateGeofenceSettings({
+        enabled: geofenceEnabled,
+        address: geofenceAddress,
+        latitude: geofenceLatitude ?? undefined,
+        longitude: geofenceLongitude ?? undefined,
+        radiusFeet: Number(geofenceRadiusFeet),
+        maxAccuracyFeet: Number(geofenceMaxAccuracyFeet),
+        pointAccuracyFeet: geofencePointAccuracyFeet ?? undefined,
+        requiredActions: geofenceRequiredActions
+      })
+      setNotice(geofenceEnabled ? `Location verification is enabled within ${geofenceRadiusFeet} feet of Car Craft.` : 'Location verification is disabled.')
+    } catch (requestError) {
+      setError(requestError?.data || requestError?.message || 'Location settings could not be saved.')
+    } finally {
+      setSavingGeofence(false)
     }
   }
 
@@ -390,6 +479,39 @@ export default function Payroll() {
               <button className="primary-btn" type="submit" disabled={savingLunchSettings || (automaticLunchEnabled && (Number(automaticLunchMinutes) < 15 || Number(automaticLunchMinutes) > 180))}>{savingLunchSettings ? 'Saving…' : 'Save Lunch Policy'}</button>
             </form>
           </article>
+          <article className="setup-card geofence-policy-card">
+            <div className="geofence-card-heading">
+              <div><p className="eyebrow">Location verification</p><h3>Require employees to be on site</h3><p>The phone’s location is checked by the server before protected actions are recorded. Exact employee coordinates are not saved.</p></div>
+              <span className={`integration-badge ${geofenceEnabled ? 'integration-badge-live' : ''}`}>{geofenceEnabled ? 'Enabled' : 'Disabled'}</span>
+            </div>
+            <form className="geofence-policy-form" onSubmit={saveGeofenceSettings}>
+              <label className="lunch-toggle"><input type="checkbox" checked={geofenceEnabled} onChange={(event) => setGeofenceEnabled(event.target.checked)} /><span>Enable on-site location verification</span></label>
+              <div className="geofence-config-grid">
+                <div className="geofence-location-panel">
+                  <label>Shop address<input value={geofenceAddress} maxLength="160" onChange={(event) => setGeofenceAddress(event.target.value)} /></label>
+                  <div className={`shop-point-status ${geofenceLatitude !== null && geofenceLongitude !== null ? 'ready' : ''}`}>
+                    <strong>{geofenceLatitude !== null && geofenceLongitude !== null ? 'Shop point saved' : 'Shop point required'}</strong>
+                    <span>{geofenceLatitude !== null && geofenceLongitude !== null ? `Center point is ready${geofencePointAccuracyFeet ? ` · captured within ${geofencePointAccuracyFeet} ft` : ''}.` : 'Stand at Car Craft and capture this device’s current location.'}</span>
+                  </div>
+                  <button className="ghost-btn" type="button" disabled={capturingShopLocation} onClick={captureShopLocation}>{capturingShopLocation ? 'Finding Location…' : 'Set Shop Location From This Device'}</button>
+                </div>
+                <div className="geofence-rules-panel">
+                  <div className="geofence-number-grid">
+                    <label>Allowed radius<input type="number" min="100" max="1000" step="25" value={geofenceRadiusFeet} onChange={(event) => setGeofenceRadiusFeet(event.target.value)} /><span>feet from the saved shop point</span></label>
+                    <label>Maximum GPS uncertainty<input type="number" min="50" max="500" step="25" value={geofenceMaxAccuracyFeet} onChange={(event) => setGeofenceMaxAccuracyFeet(event.target.value)} /><span>reject less-accurate readings</span></label>
+                  </div>
+                  <fieldset className="geofence-actions">
+                    <legend>Require location for</legend>
+                    <label><input type="checkbox" checked={geofenceRequiredActions.includes('clock_in')} onChange={(event) => toggleGeofenceActions(['clock_in'], event.target.checked)} /> Clock In</label>
+                    <label><input type="checkbox" checked={geofenceRequiredActions.includes('lunch_start') && geofenceRequiredActions.includes('lunch_end')} onChange={(event) => toggleGeofenceActions(['lunch_start', 'lunch_end'], event.target.checked)} /> Lunch actions</label>
+                    <label><input type="checkbox" checked={geofenceRequiredActions.includes('clock_out')} onChange={(event) => toggleGeofenceActions(['clock_out'], event.target.checked)} /> Clock Out</label>
+                  </fieldset>
+                </div>
+              </div>
+              <p className="control-note geofence-privacy-note">Recommended: Clock In only, 350-foot radius, and 200-foot maximum uncertainty. Employees must grant browser location permission when prompted.</p>
+              <button className="primary-btn" type="submit" disabled={savingGeofence || (geofenceEnabled && (geofenceLatitude === null || geofenceLongitude === null || geofenceRequiredActions.length === 0))}>{savingGeofence ? 'Saving…' : 'Save Location Policy'}</button>
+            </form>
+          </article>
         </div>
       </div>
 
@@ -438,7 +560,7 @@ export default function Payroll() {
             {weeklyEvents.map((event) => (
               <tr key={event._id}>
                 <td><strong>{event.employeeName}</strong></td>
-                <td>{eventLabels[event.eventType]}{event.note ? <span>{event.note}</span> : null}</td>
+                <td>{eventLabels[event.eventType]}{event.locationVerified ? <span className="verified-location-note">On-site verified · {Math.round(event.locationDistanceMeters * 3.28084)} ft from shop</span> : null}{event.note ? <span>{event.note}</span> : null}</td>
                 <td>{formatTime(event.occurredAt)}</td>
                 <td>{event.locationName}</td>
                 <td><span className="status-pill">{event.source.toUpperCase()}</span></td>

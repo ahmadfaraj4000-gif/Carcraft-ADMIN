@@ -5,6 +5,9 @@ import { ConvexError, v } from 'convex/values'
 
 const SESSION_LIFETIME_MS = 180 * 24 * 60 * 60 * 1000
 const DEFAULT_LUNCH_MINUTES = 60
+const DEFAULT_GEOFENCE_ADDRESS = '8 South St, West Hartford, CT 06110'
+const DEFAULT_GEOFENCE_RADIUS_METERS = 350 / 3.28084
+const DEFAULT_GEOFENCE_MAX_ACCURACY_METERS = 200 / 3.28084
 const SETTINGS_KEY = 'default'
 const eventType = v.union(
   v.literal('clock_in'),
@@ -35,6 +38,16 @@ function validActions(state: ReturnType<typeof stateAfter>): ClockEvent[] {
   if (state === 'off_shift') return ['clock_in']
   if (state === 'on_lunch') return ['lunch_end']
   return ['lunch_start', 'clock_out']
+}
+
+function distanceMeters(latitudeA: number, longitudeA: number, latitudeB: number, longitudeB: number) {
+  const radians = (degrees: number) => degrees * Math.PI / 180
+  const earthRadiusMeters = 6371000
+  const latitudeDelta = radians(latitudeB - latitudeA)
+  const longitudeDelta = radians(longitudeB - longitudeA)
+  const haversine = Math.sin(latitudeDelta / 2) ** 2 +
+    Math.cos(radians(latitudeA)) * Math.cos(radians(latitudeB)) * Math.sin(longitudeDelta / 2) ** 2
+  return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine))
 }
 
 async function requireAdmin(ctx: any) {
@@ -79,9 +92,18 @@ async function getSettings(ctx: any) {
     .query('timeClockSettings')
     .withIndex('by_key', (q: any) => q.eq('key', SETTINGS_KEY))
     .unique()
-  return settings || {
-    automaticLunchEndEnabled: false,
-    automaticLunchMinutes: DEFAULT_LUNCH_MINUTES
+  return {
+    ...settings,
+    automaticLunchEndEnabled: settings?.automaticLunchEndEnabled ?? false,
+    automaticLunchMinutes: settings?.automaticLunchMinutes ?? DEFAULT_LUNCH_MINUTES,
+    geofenceEnabled: settings?.geofenceEnabled ?? false,
+    geofenceAddress: settings?.geofenceAddress ?? DEFAULT_GEOFENCE_ADDRESS,
+    geofenceLatitude: settings?.geofenceLatitude,
+    geofenceLongitude: settings?.geofenceLongitude,
+    geofenceRadiusMeters: settings?.geofenceRadiusMeters ?? DEFAULT_GEOFENCE_RADIUS_METERS,
+    geofenceMaxAccuracyMeters: settings?.geofenceMaxAccuracyMeters ?? DEFAULT_GEOFENCE_MAX_ACCURACY_METERS,
+    geofencePointAccuracyMeters: settings?.geofencePointAccuracyMeters,
+    geofenceRequiredActions: settings?.geofenceRequiredActions ?? ['clock_in']
   }
 }
 
@@ -112,6 +134,8 @@ export const getClockState = query({
       employeeName: identity.employee.name,
       clockState,
       validActions: validActions(clockState),
+      locationRequiredActions: settings.geofenceEnabled ? settings.geofenceRequiredActions : [],
+      locationRadiusFeet: Math.round(settings.geofenceRadiusMeters * 3.28084),
       automaticLunchEndAt: clockState === 'on_lunch' && settings.automaticLunchEndEnabled
         ? latest.occurredAt + settings.automaticLunchMinutes * 60 * 1000
         : null,
@@ -169,7 +193,10 @@ export const recordEvent = mutation({
   args: {
     tagCode: v.string(),
     sessionToken: v.string(),
-    eventType
+    eventType,
+    latitude: v.optional(v.number()),
+    longitude: v.optional(v.number()),
+    accuracyMeters: v.optional(v.number())
   },
   handler: async (ctx, args) => {
     const [location, identity] = await Promise.all([
@@ -179,10 +206,36 @@ export const recordEvent = mutation({
     if (!location) throw new ConvexError('This clock tag is not active.')
     if (!identity) throw new ConvexError('This phone is no longer enrolled. Ask a manager for a new code.')
 
-    const latest = await latestEmployeeEvent(ctx, identity.employee._id)
+    const [latest, settings] = await Promise.all([
+      latestEmployeeEvent(ctx, identity.employee._id),
+      getSettings(ctx)
+    ])
     const clockState = stateAfter(latest?.eventType)
     if (!validActions(clockState).includes(args.eventType)) {
       throw new ConvexError('That action is not available for your current clock status.')
+    }
+
+    let locationDistance = null
+    let locationAccuracy = null
+    if (settings.geofenceEnabled && settings.geofenceRequiredActions.includes(args.eventType)) {
+      if (typeof settings.geofenceLatitude !== 'number' || typeof settings.geofenceLongitude !== 'number') {
+        throw new ConvexError('The shop location is not configured. Ask a manager for help.')
+      }
+      if (
+        typeof args.latitude !== 'number' || args.latitude < -90 || args.latitude > 90 ||
+        typeof args.longitude !== 'number' || args.longitude < -180 || args.longitude > 180 ||
+        typeof args.accuracyMeters !== 'number' || args.accuracyMeters < 0
+      ) {
+        throw new ConvexError('Location is required for this action. Allow location access and try again.')
+      }
+      if (args.accuracyMeters > settings.geofenceMaxAccuracyMeters) {
+        throw new ConvexError('Your phone could not get an accurate enough location. Move near a window or outside and try again.')
+      }
+      locationDistance = distanceMeters(args.latitude, args.longitude, settings.geofenceLatitude, settings.geofenceLongitude)
+      locationAccuracy = args.accuracyMeters
+      if (locationDistance > settings.geofenceRadiusMeters) {
+        throw new ConvexError(`You must be within ${Math.round(settings.geofenceRadiusMeters * 3.28084)} feet of Car Craft to complete this action.`)
+      }
     }
 
     const now = Date.now()
@@ -193,12 +246,14 @@ export const recordEvent = mutation({
       locationId: location._id,
       sessionId: identity.session._id,
       source: 'nfc',
+      locationVerified: locationDistance !== null ? true : undefined,
+      locationDistanceMeters: locationDistance ?? undefined,
+      locationAccuracyMeters: locationAccuracy ?? undefined,
       createdAt: now
     })
     await ctx.db.patch(identity.session._id, { lastSeenAt: now })
     let automaticLunchEndAt = null
     if (args.eventType === 'lunch_start') {
-      const settings = await getSettings(ctx)
       if (settings.automaticLunchEndEnabled) {
         automaticLunchEndAt = now + settings.automaticLunchMinutes * 60 * 1000
         await ctx.scheduler.runAfter(
@@ -208,7 +263,15 @@ export const recordEvent = mutation({
         )
       }
     }
-    return { eventId, employeeName: identity.employee.name, eventType: args.eventType, occurredAt: now, automaticLunchEndAt }
+    return {
+      eventId,
+      employeeName: identity.employee.name,
+      eventType: args.eventType,
+      occurredAt: now,
+      automaticLunchEndAt,
+      locationVerified: locationDistance !== null,
+      locationDistanceFeet: locationDistance !== null ? Math.round(locationDistance * 3.28084) : null
+    }
   }
 })
 
@@ -288,7 +351,17 @@ export const adminDashboard = query({
       locations,
       settings: {
         automaticLunchEndEnabled: settings.automaticLunchEndEnabled,
-        automaticLunchMinutes: settings.automaticLunchMinutes
+        automaticLunchMinutes: settings.automaticLunchMinutes,
+        geofenceEnabled: settings.geofenceEnabled,
+        geofenceAddress: settings.geofenceAddress,
+        geofenceLatitude: settings.geofenceLatitude,
+        geofenceLongitude: settings.geofenceLongitude,
+        geofenceRadiusFeet: Math.round(settings.geofenceRadiusMeters * 3.28084),
+        geofenceMaxAccuracyFeet: Math.round(settings.geofenceMaxAccuracyMeters * 3.28084),
+        geofencePointAccuracyFeet: typeof settings.geofencePointAccuracyMeters === 'number'
+          ? Math.round(settings.geofencePointAccuracyMeters * 3.28084)
+          : null,
+        geofenceRequiredActions: settings.geofenceRequiredActions
       },
       events: events.map((event) => ({
         ...event,
@@ -437,6 +510,51 @@ export const updateLunchSettings = mutation({
         )
       }
     }
+  }
+})
+
+export const updateGeofenceSettings = mutation({
+  args: {
+    enabled: v.boolean(),
+    address: v.string(),
+    latitude: v.optional(v.number()),
+    longitude: v.optional(v.number()),
+    radiusFeet: v.number(),
+    maxAccuracyFeet: v.number(),
+    pointAccuracyFeet: v.optional(v.number()),
+    requiredActions: v.array(eventType)
+  },
+  handler: async (ctx, args) => {
+    const userId = await requireAdmin(ctx)
+    const radiusFeet = Math.round(args.radiusFeet)
+    const maxAccuracyFeet = Math.round(args.maxAccuracyFeet)
+    const address = args.address.trim()
+    const requiredActions = [...new Set(args.requiredActions)]
+
+    if (!address || address.length > 160) throw new Error('Enter a valid shop address.')
+    if (radiusFeet < 100 || radiusFeet > 1000) throw new Error('The allowed radius must be between 100 and 1,000 feet.')
+    if (maxAccuracyFeet < 50 || maxAccuracyFeet > 500) throw new Error('GPS accuracy must be between 50 and 500 feet.')
+    if (args.enabled && requiredActions.length === 0) throw new Error('Choose at least one action that requires location.')
+    if (args.enabled && (
+      typeof args.latitude !== 'number' || args.latitude < -90 || args.latitude > 90 ||
+      typeof args.longitude !== 'number' || args.longitude < -180 || args.longitude > 180
+    )) throw new Error('Set the shop location before enabling location verification.')
+
+    const existing = await ctx.db.query('timeClockSettings').withIndex('by_key', (q) => q.eq('key', SETTINGS_KEY)).unique()
+    const payload = {
+      geofenceEnabled: args.enabled,
+      geofenceAddress: address,
+      geofenceLatitude: args.latitude,
+      geofenceLongitude: args.longitude,
+      geofenceRadiusMeters: radiusFeet / 3.28084,
+      geofenceMaxAccuracyMeters: maxAccuracyFeet / 3.28084,
+      geofencePointAccuracyMeters: typeof args.pointAccuracyFeet === 'number' ? args.pointAccuracyFeet / 3.28084 : undefined,
+      geofenceRequiredActions: requiredActions,
+      updatedAt: Date.now(),
+      updatedBy: userId
+    }
+    if (existing) await ctx.db.patch(existing._id, payload)
+    else await ctx.db.insert('timeClockSettings', { key: SETTINGS_KEY, automaticLunchEndEnabled: false, automaticLunchMinutes: DEFAULT_LUNCH_MINUTES, ...payload })
   }
 })
 

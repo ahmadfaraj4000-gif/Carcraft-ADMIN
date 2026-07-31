@@ -541,6 +541,11 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   font-weight: 850;
 }
 .integration-badge-live { border-color: #a8dfc3; background: #eaf8f1; color: #157347; }
+.payroll-view-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+.payroll-view-tabs { display: inline-grid; grid-template-columns: auto auto; padding: 3px; border: 1px solid var(--border-strong); border-radius: 7px; background: #f1f3f5; }
+.payroll-view-tabs button { min-height: 34px; padding: 7px 12px; border: 0; border-radius: 5px; color: #606b79; background: transparent; font-size: 12px; font-weight: 850; }
+.payroll-view-tabs button:hover { color: var(--text); background: #fff; }
+.payroll-view-tabs button.active { color: #fff; background: var(--accent-deep); box-shadow: 0 2px 8px rgba(16, 17, 20, .18); }
 .admin-notice { padding: 12px 14px; border: 1px solid var(--border); border-radius: 6px; font-size: 13px; font-weight: 750; }
 .admin-notice.success { border-color: #a8dfc3; color: #17613f; background: #edf9f3; }
 .admin-notice.error { border-color: #f1aaa5; color: #922a23; background: #fff3f2; }
@@ -556,6 +561,8 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
 .payroll-settings-grid .lunch-policy-card { grid-column: auto; }
 .payroll-stats .stat-card { min-height: 112px; padding: 17px 18px; align-content: space-between; }
 .weekly-reset-note { max-width: 220px; padding-left: 12px; border-left: 3px solid var(--accent); color: var(--muted); font-size: 12px; font-weight: 800; line-height: 1.45; }
+.week-navigation { display: grid; grid-template-columns: repeat(3, auto); justify-content: end; align-items: center; gap: 7px; }
+.week-navigation .weekly-reset-note { grid-column: 1 / -1; justify-self: end; max-width: none; margin-top: 3px; }
 .weekly-calendar-wrap { overflow: auto; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--surface); box-shadow: var(--shadow); }
 .weekly-calendar-table { min-width: 980px; table-layout: fixed; border-collapse: separate; border-spacing: 0; }
 .weekly-calendar-table th, .weekly-calendar-table td { height: 68px; padding: 12px 14px; border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); text-align: center; vertical-align: middle; }
@@ -722,7 +729,10 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .main-panel { padding: 18px; }
   .command-card, .page-header, .public-inventory-toolbar, .module-intro, .section-heading { flex-direction: column; align-items: stretch; }
   .payroll-section-header { align-items: stretch; }
+  .payroll-view-actions { justify-content: space-between; }
   .weekly-reset-note { max-width: none; }
+  .week-navigation { justify-content: start; }
+  .week-navigation .weekly-reset-note { justify-self: start; }
   .search-input { max-width: none; }
 }
 
@@ -735,6 +745,10 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .employee-create-inline .primary-btn { width: 100%; }
   .payroll-module { gap: 22px; }
   .payroll-section + .payroll-section { padding-top: 22px; }
+  .payroll-view-actions { display: grid; grid-template-columns: 1fr auto; width: 100%; }
+  .payroll-view-tabs { grid-template-columns: 1fr 1fr; width: 100%; }
+  .week-navigation { grid-template-columns: 1fr 1fr 1fr; }
+  .week-navigation .ghost-btn { min-width: 0; padding-inline: 7px; }
   .weekly-calendar-table { min-width: 860px; }
   .weekly-calendar-table .weekly-employee-column { width: 155px; }
   .weekly-calendar-table th, .weekly-calendar-table td { padding: 10px; }

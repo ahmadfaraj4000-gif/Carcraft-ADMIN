@@ -120,11 +120,14 @@ function formatCalendarHours(milliseconds) {
 
 export default function Payroll() {
   const dashboard = useQuery(api.timeClock.adminDashboard)
-  const [weeklyNow, setWeeklyNow] = useState(() => Date.now())
-  const weekBounds = useMemo(() => getEasternWeekBounds(weeklyNow), [weeklyNow])
+  const [payrollView, setPayrollView] = useState('calendar')
+  const [clockNow, setClockNow] = useState(() => Date.now())
+  const [selectedWeekOffset, setSelectedWeekOffset] = useState(0)
+  const selectedWeekReference = useMemo(() => clockNow + selectedWeekOffset * 7 * 24 * 60 * 60 * 1000, [clockNow, selectedWeekOffset])
+  const weekBounds = useMemo(() => getEasternWeekBounds(selectedWeekReference), [selectedWeekReference])
   const weeklySummary = useQuery(api.timeClock.adminWeeklySummary, {
     ...weekBounds,
-    asOf: Math.floor(weeklyNow / 60000) * 60000
+    asOf: selectedWeekOffset === 0 ? Math.floor(clockNow / 60000) * 60000 : weekBounds.endAt
   })
   const createEmployee = useMutation(api.timeClock.createEmployee)
   const issueEnrollmentCode = useMutation(api.timeClock.issueEnrollmentCode)
@@ -143,19 +146,19 @@ export default function Payroll() {
   const [deletingEmployee, setDeletingEmployee] = useState(false)
 
   const employees = dashboard?.employees || []
-  const events = dashboard?.events || []
+  const weeklyEvents = weeklySummary?.events || []
   const location = dashboard?.locations.find((row) => row.active)
   const clockUrl = location ? `${CLOCK_ORIGIN}?tag=${encodeURIComponent(location.tagCode)}` : ''
   const stats = useMemo(() => ({
     working: employees.filter((employee) => employee.active && employee.clockState === 'working').length,
     lunch: employees.filter((employee) => employee.active && employee.clockState === 'on_lunch').length,
     active: employees.filter((employee) => employee.active).length,
-    entries: events.length
-  }), [employees, events])
+    entries: weeklyEvents.length
+  }), [employees, weeklyEvents])
   const weeklyEmployees = weeklySummary?.employees || []
   const weeklyTotal = weeklyEmployees.reduce((total, employee) => total + employee.workedMilliseconds, 0)
   const dailyTotals = weekBounds.dayStarts.slice(0, 5).map((_, dayIndex) => weeklyEmployees.reduce((total, employee) => total + (employee.dailyMilliseconds?.[dayIndex] || 0), 0))
-  const todayKey = easternDateKey(weeklyNow)
+  const todayKey = easternDateKey(clockNow)
 
   useEffect(() => {
     if (!dashboard?.settings) return
@@ -164,7 +167,7 @@ export default function Payroll() {
   }, [dashboard?.settings?.automaticLunchEndEnabled, dashboard?.settings?.automaticLunchMinutes])
 
   useEffect(() => {
-    const timer = window.setInterval(() => setWeeklyNow(Date.now()), 60000)
+    const timer = window.setInterval(() => setClockNow(Date.now()), 60000)
     return () => window.clearInterval(timer)
   }, [])
 
@@ -276,7 +279,7 @@ export default function Payroll() {
   function exportEvents() {
     const rows = [
       ['Employee', 'Action', 'Time (Eastern)', 'Location', 'Source'],
-      ...events.map((event) => [
+      ...weeklyEvents.map((event) => [
         event.employeeName,
         eventLabels[event.eventType],
         new Date(event.occurredAt).toLocaleString('en-US', { timeZone: 'America/New_York' }),
@@ -287,7 +290,7 @@ export default function Payroll() {
     const csv = rows.map((row) => row.map((cell) => `"${String(cell).replaceAll('"', '""')}"`).join(',')).join('\n')
     const link = document.createElement('a')
     link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    link.download = `car-craft-time-clock-${new Date().toISOString().slice(0, 10)}.csv`
+    link.download = `car-craft-time-clock-${formatWeekRange(weekBounds.dayStarts).replaceAll(' ', '-').replace('–', '-to-')}.csv`
     link.click()
     URL.revokeObjectURL(link.href)
   }
@@ -302,28 +305,40 @@ export default function Payroll() {
         <div>
           <p className="eyebrow">NFC time clock</p>
           <h2>Employee timecards</h2>
-          <p>Manage employee phone enrollment and review every clock, lunch, and clock-out event.</p>
+          <p>Review weekly timecards or manage employee clock configuration.</p>
         </div>
-        <span className="integration-badge integration-badge-live">Live</span>
+        <div className="payroll-view-actions">
+          <div className="payroll-view-tabs" role="tablist" aria-label="Payroll sections">
+            <button className={payrollView === 'calendar' ? 'active' : ''} type="button" role="tab" aria-selected={payrollView === 'calendar'} onClick={() => setPayrollView('calendar')}>Calendar & Activity</button>
+            <button className={payrollView === 'configuration' ? 'active' : ''} type="button" role="tab" aria-selected={payrollView === 'configuration'} onClick={() => setPayrollView('configuration')}>Configuration</button>
+          </div>
+          <span className="integration-badge integration-badge-live">Live</span>
+        </div>
       </div>
 
       {notice ? <div className="admin-notice success">{notice}</div> : null}
       {error ? <div className="admin-notice error">{error}</div> : null}
 
+      {payrollView === 'calendar' ? <>
       <div className="payroll-section payroll-overview-section">
         <div className="payroll-section-header"><div><p className="eyebrow">Overview</p><h2>Today at a glance</h2></div></div>
         <div className="stats-grid compact payroll-stats">
           <article className="stat-card"><span>Clocked in now</span><strong>{stats.working}</strong><small>Currently working</small></article>
           <article className="stat-card"><span>On lunch</span><strong>{stats.lunch}</strong><small>Lunch in progress</small></article>
           <article className="stat-card"><span>Active employees</span><strong>{stats.active}</strong><small>Allowed to use the clock</small></article>
-          <article className="stat-card"><span>Recent entries</span><strong>{stats.entries}</strong><small>Latest 250 events</small></article>
+        <article className="stat-card"><span>Selected week entries</span><strong>{stats.entries}</strong><small>{formatWeekRange(weekBounds.dayStarts)}</small></article>
         </div>
       </div>
 
       <div className="payroll-section weekly-hours-section">
         <div className="payroll-section-header">
           <div><p className="eyebrow">Weekly timesheet</p><h2>{formatWeekRange(weekBounds.dayStarts)}</h2><p>Daily paid hours for every employee. Lunch breaks are excluded.</p></div>
-          <span className="weekly-reset-note">Resets Saturday at 12:00 a.m. ET</span>
+          <div className="week-navigation" aria-label="Choose payroll week">
+            <button className="ghost-btn small" type="button" onClick={() => setSelectedWeekOffset((current) => current - 1)}>← Previous</button>
+            <button className="ghost-btn small" type="button" disabled={selectedWeekOffset === 0} onClick={() => setSelectedWeekOffset(0)}>This Week</button>
+            <button className="ghost-btn small" type="button" disabled={selectedWeekOffset === 0} onClick={() => setSelectedWeekOffset((current) => Math.min(0, current + 1))}>Next →</button>
+            <span className="weekly-reset-note">Resets Saturday at 12:00 a.m. ET</span>
+          </div>
         </div>
         <div className="weekly-calendar-wrap">
           <table className="weekly-calendar-table">
@@ -355,8 +370,10 @@ export default function Payroll() {
         </div>
         <p className="weekly-calendar-note">Hours update every minute while someone is clocked in. The display starts fresh each Saturday; detailed activity remains saved below.</p>
       </div>
+      </> : null}
 
-      <div className="payroll-section">
+      {payrollView === 'configuration' ? <>
+      <div className="payroll-section configuration-section-first">
         <div className="payroll-section-header"><div><p className="eyebrow">Setup & policy</p><h2>How the clock operates</h2><p>Manage the NFC destination and lunch rules in one place.</p></div></div>
         <div className="payroll-settings-grid">
           <article className="setup-card clock-url-card">
@@ -407,17 +424,18 @@ export default function Payroll() {
           </table>
         </div>
       </div>
+      </> : null}
 
-      <div className="payroll-section">
+      {payrollView === 'calendar' ? <div className="payroll-section">
         <div className="payroll-section-header payroll-activity-header">
-          <div><p className="eyebrow">Activity</p><h2>Recent clock events</h2><p>Server-timestamped clock, lunch, and clock-out records.</p></div>
-          <button className="ghost-btn" type="button" disabled={!events.length} onClick={exportEvents}>Export CSV</button>
+          <div><p className="eyebrow">Activity</p><h2>{formatWeekRange(weekBounds.dayStarts)} clock events</h2><p>Clock, lunch, and clock-out records for the selected week.</p></div>
+          <button className="ghost-btn" type="button" disabled={!weeklyEvents.length} onClick={exportEvents}>Export This Week</button>
         </div>
         <div className="table-wrap">
           <table>
           <thead><tr><th>Employee</th><th>Action</th><th>Time (Eastern)</th><th>Location</th><th>Source</th></tr></thead>
           <tbody>
-            {events.map((event) => (
+            {weeklyEvents.map((event) => (
               <tr key={event._id}>
                 <td><strong>{event.employeeName}</strong></td>
                 <td>{eventLabels[event.eventType]}{event.note ? <span>{event.note}</span> : null}</td>
@@ -426,11 +444,12 @@ export default function Payroll() {
                 <td><span className="status-pill">{event.source.toUpperCase()}</span></td>
               </tr>
             ))}
-            {!events.length ? <tr><td colSpan="5" className="empty-cell"><div className="table-empty-state"><span className="table-empty-icon">{clockIcon}</span><strong>No clock activity yet</strong><span>Entries appear here as employees use the NFC clock.</span></div></td></tr> : null}
+            {weeklySummary === undefined ? <tr><td colSpan="5" className="empty-cell"><div className="table-empty-state"><span className="table-empty-icon">{clockIcon}</span><strong>Loading this week</strong><span>Retrieving the selected week’s activity.</span></div></td></tr> : null}
+            {weeklySummary && !weeklyEvents.length ? <tr><td colSpan="5" className="empty-cell"><div className="table-empty-state"><span className="table-empty-icon">{clockIcon}</span><strong>No activity this week</strong><span>Choose another week or wait for employees to use the clock.</span></div></td></tr> : null}
           </tbody>
           </table>
         </div>
-      </div>
+      </div> : null}
 
       {employeeToDelete ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingEmployee) setEmployeeToDelete(null) }}>

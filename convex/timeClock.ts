@@ -320,7 +320,15 @@ export const adminWeeklySummary = query({
       throw new Error('Daily reporting boundaries must be inside the workweek.')
     }
 
-    const employees = await ctx.db.query('timeClockEmployees').order('asc').collect()
+    const [employees, locations, activityEvents] = await Promise.all([
+      ctx.db.query('timeClockEmployees').order('asc').collect(),
+      ctx.db.query('timeClockLocations').order('asc').collect(),
+      ctx.db
+        .query('timeClockEvents')
+        .withIndex('by_time', (q) => q.gte('occurredAt', reportingDays[0]).lt('occurredAt', reportingDays[5]))
+        .order('desc')
+        .collect()
+    ])
     const cutoff = Math.max(startAt, Math.min(asOf, endAt, Date.now()))
     const rows = await Promise.all(employees.map(async (employee) => {
       const [previous, events] = await Promise.all([
@@ -376,7 +384,17 @@ export const adminWeeklySummary = query({
       }
     }))
 
-    return { startAt, endAt, asOf: cutoff, dayStarts: reportingDays, employees: rows }
+    const employeeById = new Map(employees.map((employee) => [String(employee._id), employee]))
+    const locationById = new Map(locations.map((location) => [String(location._id), location]))
+    const events = activityEvents
+      .filter((event) => event.occurredAt <= cutoff)
+      .map((event) => ({
+        ...event,
+        employeeName: employeeById.get(String(event.employeeId))?.name || 'Unknown employee',
+        locationName: locationById.get(String(event.locationId))?.name || 'Unknown location'
+      }))
+
+    return { startAt, endAt, asOf: cutoff, dayStarts: reportingDays, employees: rows, events }
   }
 })
 

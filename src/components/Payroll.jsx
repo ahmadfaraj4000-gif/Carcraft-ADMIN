@@ -55,6 +55,7 @@ export default function Payroll() {
   const createEmployee = useMutation(api.timeClock.createEmployee)
   const issueEnrollmentCode = useMutation(api.timeClock.issueEnrollmentCode)
   const setEmployeeActive = useMutation(api.timeClock.setEmployeeActive)
+  const deleteEmployee = useMutation(api.timeClock.deleteEmployee)
   const updateLunchSettings = useMutation(api.timeClock.updateLunchSettings)
   const [employeeName, setEmployeeName] = useState('')
   const [issuedCodes, setIssuedCodes] = useState({})
@@ -64,6 +65,8 @@ export default function Payroll() {
   const [automaticLunchEnabled, setAutomaticLunchEnabled] = useState(false)
   const [automaticLunchMinutes, setAutomaticLunchMinutes] = useState(60)
   const [savingLunchSettings, setSavingLunchSettings] = useState(false)
+  const [employeeToDelete, setEmployeeToDelete] = useState(null)
+  const [deletingEmployee, setDeletingEmployee] = useState(false)
 
   const employees = dashboard?.employees || []
   const events = dashboard?.events || []
@@ -140,6 +143,27 @@ export default function Payroll() {
     }
   }
 
+  async function confirmDeleteEmployee() {
+    if (!employeeToDelete) return
+    setError('')
+    setNotice('')
+    setDeletingEmployee(true)
+    try {
+      const result = await deleteEmployee({ employeeId: employeeToDelete._id })
+      setIssuedCodes((current) => {
+        const next = { ...current }
+        delete next[employeeToDelete._id]
+        return next
+      })
+      setNotice(`${result.employeeName} and all associated time-clock data were permanently deleted.`)
+      setEmployeeToDelete(null)
+    } catch (requestError) {
+      setError(requestError?.data || requestError?.message || 'The employee could not be deleted.')
+    } finally {
+      setDeletingEmployee(false)
+    }
+  }
+
   async function copyClockUrl() {
     if (!clockUrl) return
     await navigator.clipboard.writeText(clockUrl)
@@ -203,85 +227,75 @@ export default function Payroll() {
       {notice ? <div className="admin-notice success">{notice}</div> : null}
       {error ? <div className="admin-notice error">{error}</div> : null}
 
-      <div className="stats-grid compact">
-        <article className="stat-card"><span>Clocked in now</span><strong>{stats.working}</strong><small>Currently working</small></article>
-        <article className="stat-card"><span>On lunch</span><strong>{stats.lunch}</strong><small>Lunch in progress</small></article>
-        <article className="stat-card"><span>Active employees</span><strong>{stats.active}</strong><small>Allowed to use the clock</small></article>
-        <article className="stat-card"><span>Recent entries</span><strong>{stats.entries}</strong><small>Latest 250 events</small></article>
+      <div className="payroll-section payroll-overview-section">
+        <div className="payroll-section-header"><div><p className="eyebrow">Overview</p><h2>Today at a glance</h2></div></div>
+        <div className="stats-grid compact payroll-stats">
+          <article className="stat-card"><span>Clocked in now</span><strong>{stats.working}</strong><small>Currently working</small></article>
+          <article className="stat-card"><span>On lunch</span><strong>{stats.lunch}</strong><small>Lunch in progress</small></article>
+          <article className="stat-card"><span>Active employees</span><strong>{stats.active}</strong><small>Allowed to use the clock</small></article>
+          <article className="stat-card"><span>Recent entries</span><strong>{stats.entries}</strong><small>Latest 250 events</small></article>
+        </div>
       </div>
 
-      <div className="payroll-layout payroll-live-layout">
-        <article className="setup-card clock-url-card">
-          <div>
-            <p className="eyebrow">NFC tag URL</p>
-            <h3>{location?.name || 'Clock location not configured'}</h3>
-            <p>Program every wall tag with this exact URL. The tag only opens the clock—it never stores employee information.</p>
-          </div>
-          {clockUrl ? <code className="clock-url">{clockUrl}</code> : <div className="empty-command-card">Run the clock-location setup before programming tags.</div>}
-          <button className="primary-btn" type="button" disabled={!clockUrl} onClick={copyClockUrl}>{clockIcon} Copy NFC URL</button>
-        </article>
+      <div className="payroll-section">
+        <div className="payroll-section-header"><div><p className="eyebrow">Setup & policy</p><h2>How the clock operates</h2><p>Manage the NFC destination and lunch rules in one place.</p></div></div>
+        <div className="payroll-settings-grid">
+          <article className="setup-card clock-url-card">
+            <div><p className="eyebrow">Clock location</p><h3>{location?.name || 'Clock location not configured'}</h3><p>Program every wall tag with this URL. Tags open the clock but never store employee information.</p></div>
+            {clockUrl ? <code className="clock-url">{clockUrl}</code> : <div className="empty-command-card">Run the clock-location setup before programming tags.</div>}
+            <button className="primary-btn" type="button" disabled={!clockUrl} onClick={copyClockUrl}>{clockIcon} Copy NFC URL</button>
+          </article>
+          <article className="setup-card lunch-policy-card">
+            <div><p className="eyebrow">Lunch policy</p><h3>Automatic lunch end</h3><p>Optionally return employees to clocked-in status after a fixed break.</p></div>
+            <form className="lunch-policy-form" onSubmit={saveLunchSettings}>
+              <label className="lunch-toggle"><input type="checkbox" checked={automaticLunchEnabled} onChange={(event) => setAutomaticLunchEnabled(event.target.checked)} /><span>Enable automatic lunch end</span></label>
+              <label className="lunch-duration"><span>Lunch duration</span><div><input type="number" min="15" max="180" step="1" disabled={!automaticLunchEnabled} value={automaticLunchMinutes} onChange={(event) => setAutomaticLunchMinutes(event.target.value)} /><strong>minutes</strong></div></label>
+              <p className="control-note">Employees can still end lunch early. When disabled, they must tap End Lunch themselves.</p>
+              <button className="primary-btn" type="submit" disabled={savingLunchSettings || (automaticLunchEnabled && (Number(automaticLunchMinutes) < 15 || Number(automaticLunchMinutes) > 180))}>{savingLunchSettings ? 'Saving…' : 'Save Lunch Policy'}</button>
+            </form>
+          </article>
+        </div>
+      </div>
 
-        <article className="setup-card">
-          <div>
-            <p className="eyebrow">Add employee</p>
-            <h3>Create an enrollment code</h3>
-            <p>The one-time code expires in seven days and is removed as soon as the employee connects a phone.</p>
-          </div>
-          <form className="employee-create-form" onSubmit={create}>
+      <div className="payroll-section">
+        <div className="payroll-section-header"><div><p className="eyebrow">Employees</p><h2>Access & enrollment</h2><p>Add staff, issue phone codes, or remove old accounts and records.</p></div></div>
+        <article className="setup-card employee-create-panel">
+          <div><h3>Add an employee</h3><p>Create a one-time phone enrollment code that expires in seven days.</p></div>
+          <form className="employee-create-form employee-create-inline" onSubmit={create}>
             <label>Employee full name<input value={employeeName} onChange={(event) => setEmployeeName(event.target.value)} placeholder="Example: Alex Rivera" maxLength="80" /></label>
             <button className="primary-btn" disabled={busyEmployee === 'new' || !employeeName.trim()} type="submit">{busyEmployee === 'new' ? 'Adding…' : 'Add Employee'}</button>
           </form>
         </article>
-
-        <article className="setup-card lunch-policy-card">
-          <div>
-            <p className="eyebrow">Lunch policy</p>
-            <h3>Automatic lunch end</h3>
-            <p>When enabled, an employee who starts lunch is returned to clocked-in status automatically after the selected number of minutes.</p>
-          </div>
-          <form className="lunch-policy-form" onSubmit={saveLunchSettings}>
-            <label className="lunch-toggle">
-              <input type="checkbox" checked={automaticLunchEnabled} onChange={(event) => setAutomaticLunchEnabled(event.target.checked)} />
-              <span>Enable automatic lunch end</span>
-            </label>
-            <label className="lunch-duration">
-              <span>Lunch duration</span>
-              <div><input type="number" min="15" max="180" step="1" disabled={!automaticLunchEnabled} value={automaticLunchMinutes} onChange={(event) => setAutomaticLunchMinutes(event.target.value)} /><strong>minutes</strong></div>
-            </label>
-            <p className="control-note">Employees may still end lunch early. Disabling this requires employees to tap End Lunch themselves.</p>
-            <button className="primary-btn" type="submit" disabled={savingLunchSettings || (automaticLunchEnabled && (Number(automaticLunchMinutes) < 15 || Number(automaticLunchMinutes) > 180))}>{savingLunchSettings ? 'Saving…' : 'Save Lunch Policy'}</button>
-          </form>
-        </article>
+        <div className="table-wrap employee-management-wrap">
+          <table className="employee-management-table">
+            <thead><tr><th>Employee</th><th>Current status</th><th>Last activity</th><th>Enrollment</th><th>Actions</th></tr></thead>
+            <tbody>
+              {employees.map((employee) => (
+                <tr className={employee.active ? '' : 'employee-row-inactive'} key={employee._id}>
+                  <td><div className="employee-name-cell"><strong>{employee.name}</strong><small>{employee.active ? 'Access enabled' : 'Access disabled'}</small></div></td>
+                  <td><span className={`status-pill clock-${employee.clockState}`}>{employee.active ? stateLabels[employee.clockState] : 'Inactive'}</span></td>
+                  <td>{employee.lastEventAt ? formatTime(employee.lastEventAt) : <span className="muted">No entries yet</span>}</td>
+                  <td>{issuedCodes[employee._id] ? <div className="employee-code-cell"><strong>{issuedCodes[employee._id]}</strong><small>Expires in 7 days</small></div> : employee.enrollmentPending ? <span className="status-pill enrollment-pending-pill">Code active</span> : <span className="muted">Phone connected</span>}</td>
+                  <td><div className="employee-actions">
+                    <button className="ghost-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => regenerate(employee)}>New Code</button>
+                    <button className="ghost-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => toggleEmployee(employee)}>{employee.active ? 'Deactivate' : 'Reactivate'}</button>
+                    <button className="delete-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => setEmployeeToDelete(employee)}>Delete</button>
+                  </div></td>
+                </tr>
+              ))}
+              {!employees.length ? <tr><td colSpan="5" className="empty-cell"><div className="table-empty-state"><span className="table-empty-icon">+</span><strong>No employees yet</strong><span>Add the first employee above to create an enrollment code.</span></div></td></tr> : null}
+            </tbody>
+          </table>
+        </div>
       </div>
 
-      <div className="section-heading"><div><h2>Employees</h2><p>Enrollment codes are visible only when created in this browser session.</p></div></div>
-      <div className="employee-clock-grid">
-        {employees.map((employee) => (
-          <article className={`employee-clock-card ${employee.active ? '' : 'inactive'}`} key={employee._id}>
-            <div className="command-topline">
-              <div><h3>{employee.name}</h3><span className={`status-pill clock-${employee.clockState}`}>{employee.active ? stateLabels[employee.clockState] : 'Inactive'}</span></div>
-              <small>{employee.lastEventAt ? `Last: ${formatTime(employee.lastEventAt)}` : 'No entries yet'}</small>
-            </div>
-            {issuedCodes[employee._id] ? (
-              <div className="enrollment-code"><span>One-time enrollment code</span><strong>{issuedCodes[employee._id]}</strong><small>Expires in 7 days</small></div>
-            ) : employee.enrollmentPending ? (
-              <div className="pending-code-note">An enrollment code is active. Regenerate it if the employee needs a new one.</div>
-            ) : null}
-            <div className="quick-actions">
-              <button className="ghost-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => regenerate(employee)}>New Code</button>
-              <button className="ghost-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => toggleEmployee(employee)}>{employee.active ? 'Deactivate' : 'Reactivate'}</button>
-            </div>
-          </article>
-        ))}
-        {!employees.length ? <div className="empty-command-card">No employees yet. Add the first employee above.</div> : null}
-      </div>
-
-      <div className="section-heading">
-        <div><h2>Recent clock activity</h2><p>Original entries are append-only and use server timestamps.</p></div>
-        <button className="ghost-btn" type="button" disabled={!events.length} onClick={exportEvents}>Export CSV</button>
-      </div>
-      <div className="table-wrap">
-        <table>
+      <div className="payroll-section">
+        <div className="payroll-section-header payroll-activity-header">
+          <div><p className="eyebrow">Activity</p><h2>Recent clock events</h2><p>Server-timestamped clock, lunch, and clock-out records.</p></div>
+          <button className="ghost-btn" type="button" disabled={!events.length} onClick={exportEvents}>Export CSV</button>
+        </div>
+        <div className="table-wrap">
+          <table>
           <thead><tr><th>Employee</th><th>Action</th><th>Time (Eastern)</th><th>Location</th><th>Source</th></tr></thead>
           <tbody>
             {events.map((event) => (
@@ -295,8 +309,25 @@ export default function Payroll() {
             ))}
             {!events.length ? <tr><td colSpan="5" className="empty-cell"><div className="table-empty-state"><span className="table-empty-icon">{clockIcon}</span><strong>No clock activity yet</strong><span>Entries appear here as employees use the NFC clock.</span></div></td></tr> : null}
           </tbody>
-        </table>
+          </table>
+        </div>
       </div>
+
+      {employeeToDelete ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingEmployee) setEmployeeToDelete(null) }}>
+          <section className="modal-card delete-confirm-card" role="dialog" aria-modal="true" aria-labelledby="delete-employee-title">
+            <div className="modal-header"><div><p className="eyebrow">Permanent deletion</p><h2 id="delete-employee-title">Delete {employeeToDelete.name}?</h2></div></div>
+            <div className="delete-confirm-body">
+              <strong>This cannot be undone.</strong>
+              <p>This permanently removes the employee, their enrollment code, every remembered phone session, and all clock, lunch, and clock-out records.</p>
+            </div>
+            <div className="modal-actions">
+              <button className="ghost-btn" type="button" disabled={deletingEmployee} onClick={() => setEmployeeToDelete(null)}>Cancel</button>
+              <button className="delete-btn danger-fill" type="button" disabled={deletingEmployee} onClick={confirmDeleteEmployee}>{deletingEmployee ? 'Deleting…' : 'Delete Employee & Records'}</button>
+            </div>
+          </section>
+        </div>
+      ) : null}
     </section>
   )
 }

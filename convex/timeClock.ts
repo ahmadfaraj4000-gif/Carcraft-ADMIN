@@ -393,6 +393,36 @@ export const setEmployeeActive = mutation({
   }
 })
 
+export const deleteEmployee = mutation({
+  args: { employeeId: v.id('timeClockEmployees') },
+  handler: async (ctx, { employeeId }) => {
+    await requireAdmin(ctx)
+    const employee = await ctx.db.get(employeeId)
+    if (!employee) throw new Error('That employee no longer exists.')
+
+    const [sessions, events] = await Promise.all([
+      ctx.db
+        .query('timeClockSessions')
+        .withIndex('by_employee', (q) => q.eq('employeeId', employeeId))
+        .collect(),
+      ctx.db
+        .query('timeClockEvents')
+        .withIndex('by_employee_time', (q) => q.eq('employeeId', employeeId))
+        .collect()
+    ])
+
+    for (const event of events) await ctx.db.delete(event._id)
+    for (const session of sessions) await ctx.db.delete(session._id)
+    await ctx.db.delete(employeeId)
+
+    return {
+      employeeName: employee.name,
+      deletedSessions: sessions.length,
+      deletedEvents: events.length
+    }
+  }
+})
+
 export const seedDefaultLocation = internalMutation({
   args: { name: v.string(), tagCode: v.string() },
   handler: async (ctx, args) => {

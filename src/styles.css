@@ -546,6 +546,15 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
 .admin-notice.error { border-color: #f1aaa5; color: #922a23; background: #fff3f2; }
 .stat-card small { color: var(--muted); }
 .payroll-layout { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(300px, .85fr); gap: 12px; }
+.payroll-module { gap: 26px; }
+.payroll-section { display: grid; gap: 14px; }
+.payroll-section + .payroll-section { padding-top: 26px; border-top: 1px solid var(--border); }
+.payroll-section-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 18px; }
+.payroll-section-header h2 { margin: 0; font-size: 21px; }
+.payroll-section-header p:last-child { margin: 6px 0 0; color: var(--muted); line-height: 1.55; }
+.payroll-settings-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(360px, .9fr); gap: 14px; }
+.payroll-settings-grid .lunch-policy-card { grid-column: auto; }
+.payroll-stats .stat-card { min-height: 112px; padding: 17px 18px; align-content: space-between; }
 .setup-card {
   padding: 20px;
   border: 1px solid var(--border);
@@ -612,6 +621,25 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
 .enrollment-code span, .enrollment-code small { display: block; color: var(--muted); font-size: 11px; }
 .enrollment-code strong { display: block; margin: 5px 0; color: #104d34; font-size: 26px; letter-spacing: .15em; }
 .pending-code-note { padding: 11px; border-radius: 6px; color: #705017; background: #fff8e8; font-size: 12px; line-height: 1.5; }
+.employee-create-panel { grid-template-columns: minmax(220px, .75fr) minmax(420px, 1.25fr); align-items: end; gap: 28px; }
+.employee-create-inline { grid-template-columns: minmax(260px, 1fr) auto; align-items: end; }
+.employee-create-inline .primary-btn { min-width: 150px; }
+.employee-management-wrap { border-color: var(--border-strong); }
+.employee-management-table { min-width: 1040px; }
+.employee-management-table th { padding-top: 14px; padding-bottom: 14px; background: var(--surface-soft); }
+.employee-management-table td { padding-top: 15px; padding-bottom: 15px; vertical-align: middle; }
+.employee-management-table tbody tr:last-child td { border-bottom: 0; }
+.employee-row-inactive { background: #fafafa; }
+.employee-row-inactive td { opacity: .72; }
+.employee-name-cell, .employee-code-cell { display: grid; gap: 4px; }
+.employee-name-cell strong { font-size: 14px; }
+.employee-name-cell small, .employee-code-cell small { color: var(--muted); font-size: 11px; }
+.employee-code-cell strong { color: #104d34; font-size: 18px; letter-spacing: .12em; }
+.enrollment-pending-pill { display: inline-flex; width: max-content; color: #705017; background: #fff8e8; border-color: #efd99e; }
+.employee-actions { display: flex; align-items: center; gap: 7px; white-space: nowrap; }
+.payroll-activity-header .ghost-btn { flex: 0 0 auto; }
+.delete-confirm-card h2 { margin: 0; }
+.danger-fill:hover { border-color: transparent; color: #fff; background: #922018; }
 .loading-card { padding: 40px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--muted); text-align: center; }
 .section-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; padding-top: 4px; }
 .section-heading h2, .section-heading p { margin-bottom: 0; }
@@ -647,6 +675,8 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .stats-grid, .stats-grid.compact { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .form-grid, .detail-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .payroll-layout { grid-template-columns: 1fr; }
+  .payroll-settings-grid { grid-template-columns: 1fr; }
+  .employee-create-panel { grid-template-columns: 1fr; gap: 16px; }
 }
 
 @media (max-width: 860px) {
@@ -666,6 +696,7 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .side-nav { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .main-panel { padding: 18px; }
   .command-card, .page-header, .public-inventory-toolbar, .module-intro, .section-heading { flex-direction: column; align-items: stretch; }
+  .payroll-section-header { align-items: stretch; }
   .search-input { max-width: none; }
 }
 
@@ -674,4 +705,8 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .stats-grid, .stats-grid.compact, .form-grid, .detail-grid, .side-nav { grid-template-columns: 1fr; }
   .page-header, .panel-form, .calendar-shell, .modal-card { padding: 16px; }
   .inventory-admin-grid { grid-template-columns: 1fr; }
+  .employee-create-inline { grid-template-columns: 1fr; }
+  .employee-create-inline .primary-btn { width: 100%; }
+  .payroll-module { gap: 22px; }
+  .payroll-section + .payroll-section { padding-top: 22px; }
 }

@@ -633,6 +633,15 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
 .lunch-duration strong { color: var(--text); font-size: 13px; }
 .lunch-policy-form .control-note { margin: 0; text-align: left; }
 .geofence-policy-card { grid-column: 1 / -1; }
+.notification-policy-card { grid-column: 1 / -1; }
+.notification-card-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
+.notification-card-heading .integration-badge { flex: 0 0 auto; }
+.notification-policy-list { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.notification-policy-list > div { min-height: 82px; padding: 14px; border-right: 1px solid var(--border); display: grid; align-content: center; gap: 5px; }
+.notification-policy-list > div:last-child { border-right: 0; }
+.notification-policy-list strong { font-size: 12px; }
+.notification-policy-list span { color: var(--muted); font-size: 11px; line-height: 1.45; }
+.notification-warning { margin: 0; color: #8b4b13; text-align: left; }
 .geofence-card-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 18px; }
 .geofence-card-heading .integration-badge { flex: 0 0 auto; }
 .geofence-policy-form { display: grid; gap: 16px; }
@@ -662,6 +671,21 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
 .employee-clock-card .command-topline { align-items: flex-start; }
 .employee-clock-card .command-topline h3 { margin-bottom: 7px; }
 .employee-clock-card .command-topline > small { color: var(--muted); text-align: right; }
+.manager-clock-heading { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; }
+.manager-clock-heading h3 { margin: 0 0 5px; font-size: 17px; }
+.manager-clock-heading small { color: var(--muted); font-size: 11px; line-height: 1.4; }
+.manager-clock-heading .status-pill { flex: 0 0 auto; }
+.manager-clock-actions { display: flex; flex-wrap: wrap; gap: 8px; padding-top: 12px; border-top: 1px solid var(--border); }
+.manager-clock-actions .ghost-btn { flex: 1 1 120px; }
+.manager-clock-out-btn { color: var(--accent-dark) !important; border-color: #e9aaa5 !important; background: #fff7f6 !important; }
+.manager-clock-out-btn:hover { color: #fff !important; border-color: var(--accent) !important; background: var(--accent) !important; }
+.manager-clock-modal { max-width: 560px; }
+.manager-clock-form { display: grid; gap: 16px; }
+.manager-clock-form label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.manager-clock-form label span { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.manager-clock-form label small { color: var(--muted); font-weight: 650; }
+.manager-clock-form textarea { width: 100%; resize: vertical; }
+.manager-clock-form .control-note { margin: 0; text-align: left; }
 .clock-working { color: #17613f; background: #e7f7ef; border-color: #afe1c7; }
 .clock-on_lunch { color: #805408; background: #fff4d6; border-color: #f2d48a; }
 .clock-off_shift { color: #59656e; background: #f3f5f6; }
@@ -727,6 +751,9 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .payroll-settings-grid { grid-template-columns: 1fr; }
   .employee-create-panel { grid-template-columns: 1fr; gap: 16px; }
   .geofence-config-grid { grid-template-columns: 1fr; }
+  .notification-policy-list { grid-template-columns: 1fr; }
+  .notification-policy-list > div { border-right: 0; border-bottom: 1px solid var(--border); }
+  .notification-policy-list > div:last-child { border-bottom: 0; }
 }
 
 @media (max-width: 860px) {
@@ -768,6 +795,7 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
   .week-navigation { grid-template-columns: 1fr 1fr 1fr; }
   .week-navigation .ghost-btn { min-width: 0; padding-inline: 7px; }
   .geofence-card-heading { flex-direction: column; }
+  .notification-card-heading { flex-direction: column; }
   .geofence-number-grid { grid-template-columns: 1fr; }
   .geofence-actions { display: grid; gap: 11px; }
   .weekly-calendar-table { min-width: 860px; }

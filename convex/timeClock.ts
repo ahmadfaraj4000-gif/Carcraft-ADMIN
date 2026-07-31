@@ -40,6 +40,54 @@ function validActions(state: ReturnType<typeof stateAfter>): ClockEvent[] {
   return ['lunch_start', 'clock_out']
 }
 
+function adminValidActions(state: ReturnType<typeof stateAfter>): ClockEvent[] {
+  if (state === 'off_shift') return ['clock_in']
+  if (state === 'on_lunch') return ['lunch_end', 'clock_out']
+  return ['lunch_start', 'clock_out']
+}
+
+const easternDateParts = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  weekday: 'short',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+  hourCycle: 'h23'
+})
+
+function partsForEasternTime(timestamp: number) {
+  return Object.fromEntries(easternDateParts.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value]))
+}
+
+function easternMidnightUtc(year: number, month: number, day: number) {
+  const target = Date.UTC(year, month - 1, day)
+  let guess = target
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = partsForEasternTime(guess)
+    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+    guess += target - represented
+  }
+  return guess
+}
+
+function easternDayBounds(timestamp: number) {
+  const parts = partsForEasternTime(timestamp)
+  const year = Number(parts.year)
+  const month = Number(parts.month)
+  const day = Number(parts.day)
+  const nextDate = new Date(Date.UTC(year, month - 1, day + 1))
+  return {
+    dateKey: `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}`,
+    weekday: parts.weekday,
+    hour: Number(parts.hour),
+    startAt: easternMidnightUtc(year, month, day),
+    endAt: easternMidnightUtc(nextDate.getUTCFullYear(), nextDate.getUTCMonth() + 1, nextDate.getUTCDate())
+  }
+}
+
 function distanceMeters(latitudeA: number, longitudeA: number, latitudeB: number, longitudeB: number) {
   const radians = (degrees: number) => degrees * Math.PI / 180
   const earthRadiusMeters = 6371000
@@ -103,7 +151,8 @@ async function getSettings(ctx: any) {
     geofenceRadiusMeters: settings?.geofenceRadiusMeters ?? DEFAULT_GEOFENCE_RADIUS_METERS,
     geofenceMaxAccuracyMeters: settings?.geofenceMaxAccuracyMeters ?? DEFAULT_GEOFENCE_MAX_ACCURACY_METERS,
     geofencePointAccuracyMeters: settings?.geofencePointAccuracyMeters,
-    geofenceRequiredActions: settings?.geofenceRequiredActions ?? ['clock_in']
+    geofenceRequiredActions: settings?.geofenceRequiredActions ?? ['clock_in'],
+    lastMissingClockOutReminderDate: settings?.lastMissingClockOutReminderDate
   }
 }
 
@@ -252,6 +301,12 @@ export const recordEvent = mutation({
       createdAt: now
     })
     await ctx.db.patch(identity.session._id, { lastSeenAt: now })
+    await ctx.scheduler.runAfter(0, internal.notifications.sendTimeClockEvent, {
+      employeeName: identity.employee.name,
+      eventType: args.eventType,
+      occurredAt: now,
+      source: 'nfc'
+    })
     let automaticLunchEndAt = null
     if (args.eventType === 'lunch_start') {
       if (settings.automaticLunchEndEnabled) {
@@ -298,6 +353,7 @@ export const automaticLunchEnd = internalMutation({
     }
 
     const now = Date.now()
+    const employee = await ctx.db.get(lunchStart.employeeId)
     await ctx.db.insert('timeClockEvents', {
       employeeId: lunchStart.employeeId,
       eventType: 'lunch_end',
@@ -308,6 +364,132 @@ export const automaticLunchEnd = internalMutation({
       note: `Lunch ended automatically after ${args.automaticLunchMinutes} minutes.`,
       createdAt: now
     })
+    if (employee) {
+      await ctx.scheduler.runAfter(0, internal.notifications.sendTimeClockEvent, {
+        employeeName: employee.name,
+        eventType: 'lunch_end',
+        occurredAt: now,
+        source: 'admin',
+        note: `Lunch ended automatically after ${args.automaticLunchMinutes} minutes.`
+      })
+    }
+  }
+})
+
+export const adminRecordEvent = mutation({
+  args: {
+    employeeId: v.id('timeClockEmployees'),
+    eventType,
+    occurredAt: v.number(),
+    note: v.optional(v.string())
+  },
+  handler: async (ctx, args) => {
+    const adminUserId = await requireAdmin(ctx)
+    const [employee, locations, settings, latest] = await Promise.all([
+      ctx.db.get(args.employeeId),
+      ctx.db.query('timeClockLocations').collect(),
+      getSettings(ctx),
+      latestEmployeeEvent(ctx, args.employeeId)
+    ])
+    if (!employee) throw new Error('That employee no longer exists.')
+    if (!employee.active) throw new Error('Reactivate this employee before recording a clock action.')
+    const location = locations.find((row) => row.active)
+    if (!location) throw new Error('No active clock location is configured.')
+
+    const currentState = stateAfter(latest?.eventType)
+    if (!adminValidActions(currentState).includes(args.eventType)) {
+      throw new Error(`That action is not available while ${employee.name} is ${currentState.replace('_', ' ')}.`)
+    }
+
+    const now = Date.now()
+    const occurredAt = Math.round(args.occurredAt)
+    if (!Number.isFinite(occurredAt) || occurredAt > now + 5 * 60 * 1000) throw new Error('The effective time cannot be in the future.')
+    if (occurredAt < now - 90 * 24 * 60 * 60 * 1000) throw new Error('Manager clock adjustments must be within the last 90 days.')
+    if (latest && occurredAt <= latest.occurredAt) throw new Error('The effective time must be after this employee’s last recorded action.')
+
+    const note = args.note?.trim()
+    if (note && note.length > 240) throw new Error('The manager note must be 240 characters or fewer.')
+    const eventNote = note || 'Recorded by an administrator.'
+    const eventId = await ctx.db.insert('timeClockEvents', {
+      employeeId: employee._id,
+      eventType: args.eventType,
+      occurredAt,
+      locationId: location._id,
+      adminUserId,
+      source: 'admin',
+      note: eventNote,
+      createdAt: now
+    })
+
+    await ctx.scheduler.runAfter(0, internal.notifications.sendTimeClockEvent, {
+      employeeName: employee.name,
+      eventType: args.eventType,
+      occurredAt,
+      source: 'admin',
+      note: note || undefined
+    })
+
+    let automaticLunchEndAt = null
+    if (args.eventType === 'lunch_start' && settings.automaticLunchEndEnabled) {
+      automaticLunchEndAt = occurredAt + settings.automaticLunchMinutes * 60 * 1000
+      await ctx.scheduler.runAfter(Math.max(0, automaticLunchEndAt - now), internal.timeClock.automaticLunchEnd, {
+        lunchStartEventId: eventId,
+        automaticLunchMinutes: settings.automaticLunchMinutes
+      })
+    }
+
+    return { eventId, employeeName: employee.name, eventType: args.eventType, occurredAt, clockState: stateAfter(args.eventType), automaticLunchEndAt }
+  }
+})
+
+export const notifyMissingClockOuts = internalMutation({
+  args: {},
+  handler: async (ctx) => {
+    const now = Date.now()
+    const day = easternDayBounds(now)
+    if (day.hour !== 17 || day.weekday === 'Sat' || day.weekday === 'Sun') {
+      return { sent: false, reason: 'outside_reminder_time' as const }
+    }
+
+    const settings = await getSettings(ctx)
+    if (settings.lastMissingClockOutReminderDate === day.dateKey) return { sent: false, reason: 'already_checked' as const }
+
+    const [employees, events] = await Promise.all([
+      ctx.db.query('timeClockEmployees').collect(),
+      ctx.db.query('timeClockEvents').withIndex('by_time', (q) => q.gte('occurredAt', day.startAt).lt('occurredAt', day.endAt)).order('asc').collect()
+    ])
+    const latestByEmployee = new Map<string, any>()
+    const clockedInToday = new Set<string>()
+    for (const event of events) {
+      const employeeId = String(event.employeeId)
+      latestByEmployee.set(employeeId, event)
+      if (event.eventType === 'clock_in') clockedInToday.add(employeeId)
+    }
+
+    const employeeNames = employees
+      .filter((employee) => {
+        const employeeId = String(employee._id)
+        const latest = latestByEmployee.get(employeeId)
+        return clockedInToday.has(employeeId) && latest && stateAfter(latest.eventType) !== 'off_shift'
+      })
+      .map((employee) => employee.name)
+      .sort((a, b) => a.localeCompare(b))
+
+    const reminderPayload = { lastMissingClockOutReminderDate: day.dateKey, updatedAt: now }
+    if (settings._id) {
+      await ctx.db.patch(settings._id, reminderPayload)
+    } else {
+      await ctx.db.insert('timeClockSettings', {
+        key: SETTINGS_KEY,
+        automaticLunchEndEnabled: false,
+        automaticLunchMinutes: DEFAULT_LUNCH_MINUTES,
+        ...reminderPayload
+      })
+    }
+
+    if (!employeeNames.length) return { sent: false, reason: 'everyone_clocked_out' as const }
+    await ctx.scheduler.runAfter(0, internal.notifications.sendMissingClockOutReminder, { employeeNames, checkedAt: now })
+    return { sent: true, employeeCount: employeeNames.length }
   }
 })
 
@@ -361,7 +543,9 @@ export const adminDashboard = query({
         geofencePointAccuracyFeet: typeof settings.geofencePointAccuracyMeters === 'number'
           ? Math.round(settings.geofencePointAccuracyMeters * 3.28084)
           : null,
-        geofenceRequiredActions: settings.geofenceRequiredActions
+        geofenceRequiredActions: settings.geofenceRequiredActions,
+        pushoverConfigured: Boolean(process.env.PUSHOVER_API_TOKEN && process.env.PUSHOVER_USER_KEY),
+        missingClockOutReminderTime: '5:00 PM ET'
       },
       events: events.map((event) => ({
         ...event,

@@ -299,6 +299,70 @@ export const adminDashboard = query({
   }
 })
 
+export const adminWeeklySummary = query({
+  args: {
+    startAt: v.number(),
+    endAt: v.number(),
+    asOf: v.number()
+  },
+  handler: async (ctx, { startAt, endAt, asOf }) => {
+    await requireAdmin(ctx)
+    const weekLength = endAt - startAt
+    if (weekLength < 6 * 24 * 60 * 60 * 1000 || weekLength > 8 * 24 * 60 * 60 * 1000) {
+      throw new Error('Invalid weekly reporting range.')
+    }
+
+    const employees = await ctx.db.query('timeClockEmployees').order('asc').collect()
+    const cutoff = Math.max(startAt, Math.min(asOf, endAt, Date.now()))
+    const rows = await Promise.all(employees.map(async (employee) => {
+      const [previous, events] = await Promise.all([
+        ctx.db
+          .query('timeClockEvents')
+          .withIndex('by_employee_time', (q) => q.eq('employeeId', employee._id).lt('occurredAt', startAt))
+          .order('desc')
+          .first(),
+        ctx.db
+          .query('timeClockEvents')
+          .withIndex('by_employee_time', (q) => q.eq('employeeId', employee._id).gte('occurredAt', startAt).lt('occurredAt', endAt))
+          .order('asc')
+          .collect()
+      ])
+
+      let working = stateAfter(previous?.eventType) === 'working'
+      let workingSince = working ? startAt : null
+      let workedMilliseconds = 0
+
+      for (const event of events) {
+        if (event.occurredAt > cutoff) break
+        if (event.eventType === 'clock_in' || event.eventType === 'lunch_end') {
+          if (!working) {
+            working = true
+            workingSince = Math.max(startAt, event.occurredAt)
+          }
+        } else if (working && workingSince !== null) {
+          workedMilliseconds += Math.max(0, event.occurredAt - workingSince)
+          working = false
+          workingSince = null
+        }
+      }
+
+      if (working && workingSince !== null && cutoff > workingSince) {
+        workedMilliseconds += cutoff - workingSince
+      }
+
+      return {
+        employeeId: employee._id,
+        employeeName: employee.name,
+        active: employee.active,
+        workedMilliseconds,
+        currentlyWorking: working && cutoff < endAt
+      }
+    }))
+
+    return { startAt, endAt, asOf: cutoff, employees: rows }
+  }
+})
+
 export const updateLunchSettings = mutation({
   args: {
     automaticLunchEndEnabled: v.boolean(),

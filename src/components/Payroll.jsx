@@ -50,8 +50,62 @@ function formatTime(timestamp) {
   }).format(new Date(timestamp))
 }
 
+const easternDateParts = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: 'numeric',
+  day: 'numeric',
+  weekday: 'short',
+  hour: 'numeric',
+  minute: 'numeric',
+  second: 'numeric',
+  hourCycle: 'h23'
+})
+
+function partsFor(timestamp) {
+  return Object.fromEntries(easternDateParts.formatToParts(new Date(timestamp)).map((part) => [part.type, part.value]))
+}
+
+function easternMidnightUtc(year, month, day) {
+  const target = Date.UTC(year, month - 1, day)
+  let guess = target
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = partsFor(guess)
+    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+    guess += target - represented
+  }
+  return guess
+}
+
+function getEasternWeekBounds(timestamp) {
+  const parts = partsFor(timestamp)
+  const weekdayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday)
+  const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)))
+  date.setUTCDate(date.getUTCDate() - ((weekdayIndex + 1) % 7))
+  const startAt = easternMidnightUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
+  date.setUTCDate(date.getUTCDate() + 7)
+  const endAt = easternMidnightUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
+  return { startAt, endAt }
+}
+
+function formatHours(milliseconds) {
+  const totalMinutes = Math.max(0, Math.floor(milliseconds / 60000))
+  return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`
+}
+
+function formatWeekRange(startAt, endAt) {
+  const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })
+  return `${formatter.format(new Date(startAt))}–${formatter.format(new Date(endAt - 1))}`
+}
+
 export default function Payroll() {
   const dashboard = useQuery(api.timeClock.adminDashboard)
+  const [weeklyNow, setWeeklyNow] = useState(() => Date.now())
+  const weekBounds = useMemo(() => getEasternWeekBounds(weeklyNow), [weeklyNow])
+  const weeklySummary = useQuery(api.timeClock.adminWeeklySummary, {
+    ...weekBounds,
+    asOf: Math.floor(weeklyNow / 60000) * 60000
+  })
   const createEmployee = useMutation(api.timeClock.createEmployee)
   const issueEnrollmentCode = useMutation(api.timeClock.issueEnrollmentCode)
   const setEmployeeActive = useMutation(api.timeClock.setEmployeeActive)
@@ -78,12 +132,20 @@ export default function Payroll() {
     active: employees.filter((employee) => employee.active).length,
     entries: events.length
   }), [employees, events])
+  const weeklyEmployees = weeklySummary?.employees || []
+  const weeklyTotal = weeklyEmployees.reduce((total, employee) => total + employee.workedMilliseconds, 0)
+  const weeklyScale = Math.max(40 * 60 * 60 * 1000, ...weeklyEmployees.map((employee) => employee.workedMilliseconds))
 
   useEffect(() => {
     if (!dashboard?.settings) return
     setAutomaticLunchEnabled(dashboard.settings.automaticLunchEndEnabled)
     setAutomaticLunchMinutes(dashboard.settings.automaticLunchMinutes)
   }, [dashboard?.settings?.automaticLunchEndEnabled, dashboard?.settings?.automaticLunchMinutes])
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setWeeklyNow(Date.now()), 60000)
+    return () => window.clearInterval(timer)
+  }, [])
 
   async function create(event) {
     event.preventDefault()
@@ -234,6 +296,37 @@ export default function Payroll() {
           <article className="stat-card"><span>On lunch</span><strong>{stats.lunch}</strong><small>Lunch in progress</small></article>
           <article className="stat-card"><span>Active employees</span><strong>{stats.active}</strong><small>Allowed to use the clock</small></article>
           <article className="stat-card"><span>Recent entries</span><strong>{stats.entries}</strong><small>Latest 250 events</small></article>
+        </div>
+      </div>
+
+      <div className="payroll-section weekly-hours-section">
+        <div className="payroll-section-header">
+          <div><p className="eyebrow">Weekly hours</p><h2>{formatWeekRange(weekBounds.startAt, weekBounds.endAt)}</h2><p>Paid time for the current workweek. Lunch breaks are excluded.</p></div>
+          <span className="weekly-reset-note">Resets Saturday at 12:00 a.m. ET</span>
+        </div>
+        <div className="weekly-hours-card">
+          <div className="weekly-hours-total">
+            <span>Team total</span>
+            <strong>{weeklySummary ? formatHours(weeklyTotal) : '—'}</strong>
+            <small>Updated every minute</small>
+          </div>
+          <div className="weekly-hours-chart" aria-label="Employee hours this week">
+            {weeklySummary === undefined ? <div className="weekly-hours-loading">Calculating this week’s hours…</div> : null}
+            {weeklyEmployees.map((employee) => (
+              <div className={`weekly-hours-row ${employee.active ? '' : 'inactive'}`} key={employee.employeeId}>
+                <div className="weekly-hours-identity">
+                  <strong>{employee.employeeName}</strong>
+                  <small>{employee.currentlyWorking ? 'Clocked in now' : employee.active ? 'Not clocked in' : 'Inactive'}</small>
+                </div>
+                <div className="weekly-hours-meter" aria-hidden="true">
+                  <span style={{ '--weekly-width': `${Math.min(100, (employee.workedMilliseconds / weeklyScale) * 100)}%` }} />
+                </div>
+                <strong className="weekly-hours-value">{formatHours(employee.workedMilliseconds)}</strong>
+              </div>
+            ))}
+            {weeklySummary && !weeklyEmployees.length ? <div className="weekly-hours-loading">Add an employee to begin weekly tracking.</div> : null}
+          </div>
+          <div className="weekly-hours-scale"><span>0 hours</span><span>40-hour scale</span></div>
         </div>
       </div>
 

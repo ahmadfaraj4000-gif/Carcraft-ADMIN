@@ -83,9 +83,12 @@ function getEasternWeekBounds(timestamp) {
   const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)))
   date.setUTCDate(date.getUTCDate() - ((weekdayIndex + 1) % 7))
   const startAt = easternMidnightUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
-  date.setUTCDate(date.getUTCDate() + 7)
-  const endAt = easternMidnightUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
-  return { startAt, endAt }
+  const dayStarts = Array.from({ length: 6 }, (_, index) => {
+    const day = new Date(date)
+    day.setUTCDate(day.getUTCDate() + index + 2)
+    return easternMidnightUtc(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate())
+  })
+  return { startAt, endAt: dayStarts[5], dayStarts }
 }
 
 function formatHours(milliseconds) {
@@ -93,9 +96,26 @@ function formatHours(milliseconds) {
   return `${Math.floor(totalMinutes / 60)}h ${String(totalMinutes % 60).padStart(2, '0')}m`
 }
 
-function formatWeekRange(startAt, endAt) {
+function formatWeekRange(dayStarts) {
   const formatter = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' })
-  return `${formatter.format(new Date(startAt))}–${formatter.format(new Date(endAt - 1))}`
+  return `${formatter.format(new Date(dayStarts[0]))}–${formatter.format(new Date(dayStarts[5] - 1))}`
+}
+
+function formatDayHeading(timestamp) {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'numeric', day: 'numeric' }).format(new Date(timestamp))
+}
+
+function easternDateKey(timestamp) {
+  const parts = partsFor(timestamp)
+  return `${parts.year}-${parts.month}-${parts.day}`
+}
+
+function formatCalendarHours(milliseconds) {
+  if (milliseconds < 60000) return '—'
+  const totalMinutes = Math.floor(milliseconds / 60000)
+  const hours = Math.floor(totalMinutes / 60)
+  const minutes = totalMinutes % 60
+  return minutes ? `${hours}h ${minutes}m` : `${hours}h`
 }
 
 export default function Payroll() {
@@ -134,7 +154,8 @@ export default function Payroll() {
   }), [employees, events])
   const weeklyEmployees = weeklySummary?.employees || []
   const weeklyTotal = weeklyEmployees.reduce((total, employee) => total + employee.workedMilliseconds, 0)
-  const weeklyScale = Math.max(40 * 60 * 60 * 1000, ...weeklyEmployees.map((employee) => employee.workedMilliseconds))
+  const dailyTotals = weekBounds.dayStarts.slice(0, 5).map((_, dayIndex) => weeklyEmployees.reduce((total, employee) => total + (employee.dailyMilliseconds?.[dayIndex] || 0), 0))
+  const todayKey = easternDateKey(weeklyNow)
 
   useEffect(() => {
     if (!dashboard?.settings) return
@@ -301,33 +322,38 @@ export default function Payroll() {
 
       <div className="payroll-section weekly-hours-section">
         <div className="payroll-section-header">
-          <div><p className="eyebrow">Weekly hours</p><h2>{formatWeekRange(weekBounds.startAt, weekBounds.endAt)}</h2><p>Paid time for the current workweek. Lunch breaks are excluded.</p></div>
+          <div><p className="eyebrow">Weekly timesheet</p><h2>{formatWeekRange(weekBounds.dayStarts)}</h2><p>Daily paid hours for every employee. Lunch breaks are excluded.</p></div>
           <span className="weekly-reset-note">Resets Saturday at 12:00 a.m. ET</span>
         </div>
-        <div className="weekly-hours-card">
-          <div className="weekly-hours-total">
-            <span>Team total</span>
-            <strong>{weeklySummary ? formatHours(weeklyTotal) : '—'}</strong>
-            <small>Updated every minute</small>
-          </div>
-          <div className="weekly-hours-chart" aria-label="Employee hours this week">
-            {weeklySummary === undefined ? <div className="weekly-hours-loading">Calculating this week’s hours…</div> : null}
-            {weeklyEmployees.map((employee) => (
-              <div className={`weekly-hours-row ${employee.active ? '' : 'inactive'}`} key={employee.employeeId}>
-                <div className="weekly-hours-identity">
-                  <strong>{employee.employeeName}</strong>
-                  <small>{employee.currentlyWorking ? 'Clocked in now' : employee.active ? 'Not clocked in' : 'Inactive'}</small>
-                </div>
-                <div className="weekly-hours-meter" aria-hidden="true">
-                  <span style={{ '--weekly-width': `${Math.min(100, (employee.workedMilliseconds / weeklyScale) * 100)}%` }} />
-                </div>
-                <strong className="weekly-hours-value">{formatHours(employee.workedMilliseconds)}</strong>
-              </div>
-            ))}
-            {weeklySummary && !weeklyEmployees.length ? <div className="weekly-hours-loading">Add an employee to begin weekly tracking.</div> : null}
-          </div>
-          <div className="weekly-hours-scale"><span>0 hours</span><span>40-hour scale</span></div>
+        <div className="weekly-calendar-wrap">
+          <table className="weekly-calendar-table">
+            <thead><tr>
+              <th className="weekly-employee-column">Employee</th>
+              {weekBounds.dayStarts.slice(0, 5).map((dayStart) => {
+                const isToday = easternDateKey(dayStart) === todayKey
+                return <th className={isToday ? 'weekly-today-column' : ''} key={dayStart}><strong>{formatDayHeading(dayStart)}</strong>{isToday ? <small>Today</small> : null}</th>
+              })}
+              <th className="weekly-total-column">Week total</th>
+            </tr></thead>
+            <tbody>
+              {weeklySummary === undefined ? <tr><td className="weekly-calendar-loading" colSpan="7">Calculating daily hours…</td></tr> : null}
+              {weeklyEmployees.map((employee) => (
+                <tr className={employee.active ? '' : 'weekly-employee-inactive'} key={employee.employeeId}>
+                  <th className="weekly-employee-column" scope="row"><strong>{employee.employeeName}</strong><small>{employee.currentlyWorking ? 'Clocked in now' : employee.active ? 'Not clocked in' : 'Inactive'}</small></th>
+                  {weekBounds.dayStarts.slice(0, 5).map((dayStart, dayIndex) => <td className={easternDateKey(dayStart) === todayKey ? 'weekly-today-column' : ''} key={dayStart}><strong>{formatCalendarHours(employee.dailyMilliseconds?.[dayIndex] || 0)}</strong></td>)}
+                  <td className="weekly-total-column"><strong>{formatHours(employee.workedMilliseconds)}</strong></td>
+                </tr>
+              ))}
+              {weeklySummary && !weeklyEmployees.length ? <tr><td className="weekly-calendar-loading" colSpan="7">Add an employee to begin weekly tracking.</td></tr> : null}
+            </tbody>
+            {weeklySummary && weeklyEmployees.length ? <tfoot><tr>
+              <th className="weekly-employee-column" scope="row">Team total</th>
+              {dailyTotals.map((total, dayIndex) => <td className={easternDateKey(weekBounds.dayStarts[dayIndex]) === todayKey ? 'weekly-today-column' : ''} key={weekBounds.dayStarts[dayIndex]}><strong>{formatCalendarHours(total)}</strong></td>)}
+              <td className="weekly-total-column"><strong>{formatHours(weeklyTotal)}</strong></td>
+            </tr></tfoot> : null}
+          </table>
         </div>
+        <p className="weekly-calendar-note">Hours update every minute while someone is clocked in. The display starts fresh each Saturday; detailed activity remains saved below.</p>
       </div>
 
       <div className="payroll-section">

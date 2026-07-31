@@ -303,13 +303,21 @@ export const adminWeeklySummary = query({
   args: {
     startAt: v.number(),
     endAt: v.number(),
-    asOf: v.number()
+    asOf: v.number(),
+    dayStarts: v.optional(v.array(v.number()))
   },
-  handler: async (ctx, { startAt, endAt, asOf }) => {
+  handler: async (ctx, { startAt, endAt, asOf, dayStarts }) => {
     await requireAdmin(ctx)
     const weekLength = endAt - startAt
     if (weekLength < 6 * 24 * 60 * 60 * 1000 || weekLength > 8 * 24 * 60 * 60 * 1000) {
       throw new Error('Invalid weekly reporting range.')
+    }
+    const reportingDays = dayStarts || Array.from({ length: 6 }, (_, index) => startAt + (index + 2) * 24 * 60 * 60 * 1000)
+    if (reportingDays.length !== 6 || reportingDays.some((day, index) => index > 0 && day <= reportingDays[index - 1])) {
+      throw new Error('Invalid daily reporting boundaries.')
+    }
+    if (reportingDays[0] < startAt || reportingDays[5] > endAt) {
+      throw new Error('Daily reporting boundaries must be inside the workweek.')
     }
 
     const employees = await ctx.db.query('timeClockEmployees').order('asc').collect()
@@ -330,7 +338,15 @@ export const adminWeeklySummary = query({
 
       let working = stateAfter(previous?.eventType) === 'working'
       let workingSince = working ? startAt : null
-      let workedMilliseconds = 0
+      const dailyMilliseconds = [0, 0, 0, 0, 0]
+
+      function addWorkingInterval(intervalStart: number, intervalEnd: number) {
+        for (let dayIndex = 0; dayIndex < 5; dayIndex += 1) {
+          const overlapStart = Math.max(intervalStart, reportingDays[dayIndex])
+          const overlapEnd = Math.min(intervalEnd, reportingDays[dayIndex + 1])
+          if (overlapEnd > overlapStart) dailyMilliseconds[dayIndex] += overlapEnd - overlapStart
+        }
+      }
 
       for (const event of events) {
         if (event.occurredAt > cutoff) break
@@ -340,26 +356,27 @@ export const adminWeeklySummary = query({
             workingSince = Math.max(startAt, event.occurredAt)
           }
         } else if (working && workingSince !== null) {
-          workedMilliseconds += Math.max(0, event.occurredAt - workingSince)
+          addWorkingInterval(workingSince, event.occurredAt)
           working = false
           workingSince = null
         }
       }
 
       if (working && workingSince !== null && cutoff > workingSince) {
-        workedMilliseconds += cutoff - workingSince
+        addWorkingInterval(workingSince, cutoff)
       }
 
       return {
         employeeId: employee._id,
         employeeName: employee.name,
         active: employee.active,
-        workedMilliseconds,
+        workedMilliseconds: dailyMilliseconds.reduce((total, milliseconds) => total + milliseconds, 0),
+        dailyMilliseconds,
         currentlyWorking: working && cutoff < endAt
       }
     }))
 
-    return { startAt, endAt, asOf: cutoff, employees: rows }
+    return { startAt, endAt, asOf: cutoff, dayStarts: reportingDays, employees: rows }
   }
 })
 

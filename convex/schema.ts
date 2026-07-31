@@ -172,6 +172,7 @@ export default defineSchema({
       v.literal('lunch_end'),
       v.literal('clock_out')
     ))),
+    lastMissingClockOutReminderDate: v.optional(v.string()),
     updatedAt: v.number(),
     updatedBy: v.optional(v.id('users'))
   }).index('by_key', ['key']),
@@ -186,6 +187,7 @@ export default defineSchema({
     occurredAt: v.number(),
     locationId: v.id('timeClockLocations'),
     sessionId: v.optional(v.id('timeClockSessions')),
+    adminUserId: v.optional(v.id('users')),
     source: v.union(v.literal('nfc'), v.literal('admin')),
     note: v.optional(v.string()),
     locationVerified: v.optional(v.boolean()),

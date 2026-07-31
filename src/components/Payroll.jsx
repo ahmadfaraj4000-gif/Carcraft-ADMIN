@@ -50,6 +50,30 @@ function formatTime(timestamp) {
   }).format(new Date(timestamp))
 }
 
+function formatEasternDateTimeInput(timestamp) {
+  const parts = partsFor(timestamp)
+  return `${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}T${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}:${String(parts.second).padStart(2, '0')}`
+}
+
+function parseEasternDateTimeInput(value) {
+  const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
+  if (!match) return NaN
+  const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] || 0))
+  let guess = target
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const parts = partsFor(guess)
+    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+    guess += target - represented
+  }
+  return guess
+}
+
+function managerActionsFor(clockState) {
+  if (clockState === 'off_shift') return ['clock_in']
+  if (clockState === 'on_lunch') return ['lunch_end', 'clock_out']
+  return ['lunch_start', 'clock_out']
+}
+
 const easternDateParts = new Intl.DateTimeFormat('en-US', {
   timeZone: 'America/New_York',
   year: 'numeric',
@@ -150,6 +174,7 @@ export default function Payroll() {
   const issueEnrollmentCode = useMutation(api.timeClock.issueEnrollmentCode)
   const setEmployeeActive = useMutation(api.timeClock.setEmployeeActive)
   const deleteEmployee = useMutation(api.timeClock.deleteEmployee)
+  const adminRecordEvent = useMutation(api.timeClock.adminRecordEvent)
   const updateLunchSettings = useMutation(api.timeClock.updateLunchSettings)
   const updateGeofenceSettings = useMutation(api.timeClock.updateGeofenceSettings)
   const [employeeName, setEmployeeName] = useState('')
@@ -162,6 +187,10 @@ export default function Payroll() {
   const [savingLunchSettings, setSavingLunchSettings] = useState(false)
   const [employeeToDelete, setEmployeeToDelete] = useState(null)
   const [deletingEmployee, setDeletingEmployee] = useState(false)
+  const [managerAction, setManagerAction] = useState(null)
+  const [managerOccurredAt, setManagerOccurredAt] = useState('')
+  const [managerNote, setManagerNote] = useState('')
+  const [savingManagerAction, setSavingManagerAction] = useState(false)
   const [geofenceEnabled, setGeofenceEnabled] = useState(false)
   const [geofenceAddress, setGeofenceAddress] = useState('8 South St, West Hartford, CT 06110')
   const [geofenceLatitude, setGeofenceLatitude] = useState(null)
@@ -266,6 +295,41 @@ export default function Payroll() {
       setError(requestError?.data || requestError?.message || 'The employee status could not be changed.')
     } finally {
       setBusyEmployee('')
+    }
+  }
+
+  function openManagerAction(employee, eventType) {
+    setError('')
+    setNotice('')
+    setManagerAction({ employee, eventType })
+    setManagerOccurredAt(formatEasternDateTimeInput(Date.now()))
+    setManagerNote('')
+  }
+
+  async function confirmManagerAction(event) {
+    event.preventDefault()
+    if (!managerAction) return
+    const occurredAt = parseEasternDateTimeInput(managerOccurredAt)
+    if (!Number.isFinite(occurredAt)) {
+      setError('Enter a valid Eastern Time for this clock action.')
+      return
+    }
+    setError('')
+    setNotice('')
+    setSavingManagerAction(true)
+    try {
+      const result = await adminRecordEvent({
+        employeeId: managerAction.employee._id,
+        eventType: managerAction.eventType,
+        occurredAt,
+        note: managerNote.trim() || undefined
+      })
+      setNotice(`${result.employeeName}: ${eventLabels[result.eventType]} recorded for ${formatTime(result.occurredAt)}.`)
+      setManagerAction(null)
+    } catch (requestError) {
+      setError(requestError?.data || requestError?.message || 'The manager clock action could not be recorded.')
+    } finally {
+      setSavingManagerAction(false)
     }
   }
 
@@ -419,6 +483,28 @@ export default function Payroll() {
         </div>
       </div>
 
+      <div className="payroll-section manager-clock-section">
+        <div className="payroll-section-header">
+          <div><p className="eyebrow">Manager controls</p><h2>Adjust current clock status</h2><p>Record a missed clock-in, lunch action, or clock-out. Every adjustment is labeled as an admin record in the activity log.</p></div>
+        </div>
+        <div className="employee-clock-grid">
+          {employees.filter((employee) => employee.active).map((employee) => (
+            <article className="employee-clock-card" key={employee._id}>
+              <div className="manager-clock-heading">
+                <div><h3>{employee.name}</h3><small>{employee.lastEventAt ? `Last action ${formatTime(employee.lastEventAt)}` : 'No clock activity yet'}</small></div>
+                <span className={`status-pill clock-${employee.clockState}`}>{stateLabels[employee.clockState]}</span>
+              </div>
+              <div className="manager-clock-actions">
+                {managerActionsFor(employee.clockState).map((action) => (
+                  <button className={`ghost-btn small ${action === 'clock_out' ? 'manager-clock-out-btn' : ''}`} type="button" key={action} onClick={() => openManagerAction(employee, action)}>{eventLabels[action]}</button>
+                ))}
+              </div>
+            </article>
+          ))}
+          {!employees.some((employee) => employee.active) ? <div className="empty-command-card">Add or reactivate an employee to use manager clock controls.</div> : null}
+        </div>
+      </div>
+
       <div className="payroll-section weekly-hours-section">
         <div className="payroll-section-header">
           <div><p className="eyebrow">Weekly timesheet</p><h2>{formatWeekRange(weekBounds.dayStarts)}</h2><p>Daily paid hours for every employee. Lunch breaks are excluded.</p></div>
@@ -478,6 +564,18 @@ export default function Payroll() {
               <p className="control-note">Employees can still end lunch early. When disabled, they must tap End Lunch themselves.</p>
               <button className="primary-btn" type="submit" disabled={savingLunchSettings || (automaticLunchEnabled && (Number(automaticLunchMinutes) < 15 || Number(automaticLunchMinutes) > 180))}>{savingLunchSettings ? 'Saving…' : 'Save Lunch Policy'}</button>
             </form>
+          </article>
+          <article className="setup-card notification-policy-card">
+            <div className="notification-card-heading">
+              <div><p className="eyebrow">Pushover alerts</p><h3>Manager time-clock notifications</h3><p>The configured manager receives the employee name and Eastern Time for every clock-in, lunch action, and clock-out.</p></div>
+              <span className={`integration-badge ${dashboard.settings.pushoverConfigured ? 'integration-badge-live' : ''}`}>{dashboard.settings.pushoverConfigured ? 'Connected' : 'Needs setup'}</span>
+            </div>
+            <div className="notification-policy-list">
+              <div><strong>Instant activity alerts</strong><span>Employee and administrator clock actions</span></div>
+              <div><strong>Missing clock-out reminder</strong><span>Weekdays at {dashboard.settings.missingClockOutReminderTime}</span></div>
+              <div><strong>Day-off protection</strong><span>Only employees who clocked in that day are checked</span></div>
+            </div>
+            {!dashboard.settings.pushoverConfigured ? <p className="control-note notification-warning">Add PUSHOVER_API_TOKEN and PUSHOVER_USER_KEY to the Convex deployment to activate delivery.</p> : null}
           </article>
           <article className="setup-card geofence-policy-card">
             <div className="geofence-card-heading">
@@ -572,6 +670,27 @@ export default function Payroll() {
           </table>
         </div>
       </div> : null}
+
+      {managerAction ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingManagerAction) setManagerAction(null) }}>
+          <section className="modal-card manager-clock-modal" role="dialog" aria-modal="true" aria-labelledby="manager-clock-title">
+            <div className="modal-header">
+              <div><p className="eyebrow">Manager adjustment</p><h2 id="manager-clock-title">{eventLabels[managerAction.eventType]} {managerAction.employee.name}?</h2></div>
+              <span className={`status-pill clock-${managerAction.employee.clockState}`}>{stateLabels[managerAction.employee.clockState]}</span>
+            </div>
+            {error ? <div className="admin-notice error">{error}</div> : null}
+            <form className="manager-clock-form" onSubmit={confirmManagerAction}>
+              <label><span>Effective time (Eastern)</span><input type="datetime-local" step="1" required value={managerOccurredAt} onChange={(event) => setManagerOccurredAt(event.target.value)} /></label>
+              <label><span>Manager note <small>Optional</small></span><textarea value={managerNote} maxLength="240" rows="3" placeholder="Example: Employee forgot to clock out before leaving." onChange={(event) => setManagerNote(event.target.value)} /></label>
+              <p className="control-note">This creates a permanent activity entry marked ADMIN and sends the manager’s Pushover alert.</p>
+              <div className="modal-actions">
+                <button className="ghost-btn" type="button" disabled={savingManagerAction} onClick={() => setManagerAction(null)}>Cancel</button>
+                <button className="primary-btn" type="submit" disabled={savingManagerAction}>{savingManagerAction ? 'Recording…' : `Confirm ${eventLabels[managerAction.eventType]}`}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
 
       {employeeToDelete ? (
         <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !deletingEmployee) setEmployeeToDelete(null) }}>

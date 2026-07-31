@@ -572,6 +572,25 @@ td span { display: block; color: var(--muted); margin-top: 4px; }
 .employee-create-form { display: grid; gap: 12px; }
 .employee-create-form label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 800; }
 .employee-create-form input { width: 100%; }
+.lunch-policy-card { grid-column: 1 / -1; }
+.lunch-policy-form { display: grid; gap: 14px; }
+.lunch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  font-size: 13px;
+  font-weight: 850;
+}
+.lunch-toggle input { width: 18px; height: 18px; accent-color: var(--accent); }
+.lunch-duration { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 800; }
+.lunch-duration > div { display: flex; align-items: center; gap: 10px; }
+.lunch-duration input { width: 120px; }
+.lunch-duration strong { color: var(--text); font-size: 13px; }
+.lunch-policy-form .control-note { margin: 0; text-align: left; }
 .employee-clock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
 .employee-clock-card {
   padding: 16px;

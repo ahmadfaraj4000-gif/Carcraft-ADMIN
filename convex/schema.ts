@@ -155,6 +155,13 @@ export default defineSchema({
     lastSeenAt: v.number(),
     expiresAt: v.number()
   }).index('by_token_hash', ['tokenHash']).index('by_employee', ['employeeId']),
+  timeClockSettings: defineTable({
+    key: v.string(),
+    automaticLunchEndEnabled: v.boolean(),
+    automaticLunchMinutes: v.number(),
+    updatedAt: v.number(),
+    updatedBy: v.optional(v.id('users'))
+  }).index('by_key', ['key']),
   timeClockEvents: defineTable({
     employeeId: v.id('timeClockEmployees'),
     eventType: v.union(

@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
@@ -55,11 +55,15 @@ export default function Payroll() {
   const createEmployee = useMutation(api.timeClock.createEmployee)
   const issueEnrollmentCode = useMutation(api.timeClock.issueEnrollmentCode)
   const setEmployeeActive = useMutation(api.timeClock.setEmployeeActive)
+  const updateLunchSettings = useMutation(api.timeClock.updateLunchSettings)
   const [employeeName, setEmployeeName] = useState('')
   const [issuedCodes, setIssuedCodes] = useState({})
   const [busyEmployee, setBusyEmployee] = useState('')
   const [notice, setNotice] = useState('')
   const [error, setError] = useState('')
+  const [automaticLunchEnabled, setAutomaticLunchEnabled] = useState(false)
+  const [automaticLunchMinutes, setAutomaticLunchMinutes] = useState(60)
+  const [savingLunchSettings, setSavingLunchSettings] = useState(false)
 
   const employees = dashboard?.employees || []
   const events = dashboard?.events || []
@@ -71,6 +75,12 @@ export default function Payroll() {
     active: employees.filter((employee) => employee.active).length,
     entries: events.length
   }), [employees, events])
+
+  useEffect(() => {
+    if (!dashboard?.settings) return
+    setAutomaticLunchEnabled(dashboard.settings.automaticLunchEndEnabled)
+    setAutomaticLunchMinutes(dashboard.settings.automaticLunchMinutes)
+  }, [dashboard?.settings?.automaticLunchEndEnabled, dashboard?.settings?.automaticLunchMinutes])
 
   async function create(event) {
     event.preventDefault()
@@ -134,6 +144,26 @@ export default function Payroll() {
     if (!clockUrl) return
     await navigator.clipboard.writeText(clockUrl)
     setNotice('Clock URL copied. This is the exact URL to write to each NFC tag.')
+  }
+
+  async function saveLunchSettings(event) {
+    event.preventDefault()
+    setError('')
+    setNotice('')
+    setSavingLunchSettings(true)
+    try {
+      await updateLunchSettings({
+        automaticLunchEndEnabled: automaticLunchEnabled,
+        automaticLunchMinutes: Number(automaticLunchMinutes)
+      })
+      setNotice(automaticLunchEnabled
+        ? `Automatic lunch end is enabled after ${automaticLunchMinutes} minutes.`
+        : 'Automatic lunch end is disabled. Employees must end lunch themselves.')
+    } catch (requestError) {
+      setError(requestError?.data || requestError?.message || 'Lunch settings could not be saved.')
+    } finally {
+      setSavingLunchSettings(false)
+    }
   }
 
   function exportEvents() {
@@ -202,6 +232,26 @@ export default function Payroll() {
             <button className="primary-btn" disabled={busyEmployee === 'new' || !employeeName.trim()} type="submit">{busyEmployee === 'new' ? 'Adding…' : 'Add Employee'}</button>
           </form>
         </article>
+
+        <article className="setup-card lunch-policy-card">
+          <div>
+            <p className="eyebrow">Lunch policy</p>
+            <h3>Automatic lunch end</h3>
+            <p>When enabled, an employee who starts lunch is returned to clocked-in status automatically after the selected number of minutes.</p>
+          </div>
+          <form className="lunch-policy-form" onSubmit={saveLunchSettings}>
+            <label className="lunch-toggle">
+              <input type="checkbox" checked={automaticLunchEnabled} onChange={(event) => setAutomaticLunchEnabled(event.target.checked)} />
+              <span>Enable automatic lunch end</span>
+            </label>
+            <label className="lunch-duration">
+              <span>Lunch duration</span>
+              <div><input type="number" min="15" max="180" step="1" disabled={!automaticLunchEnabled} value={automaticLunchMinutes} onChange={(event) => setAutomaticLunchMinutes(event.target.value)} /><strong>minutes</strong></div>
+            </label>
+            <p className="control-note">Employees may still end lunch early. Disabling this requires employees to tap End Lunch themselves.</p>
+            <button className="primary-btn" type="submit" disabled={savingLunchSettings || (automaticLunchEnabled && (Number(automaticLunchMinutes) < 15 || Number(automaticLunchMinutes) > 180))}>{savingLunchSettings ? 'Saving…' : 'Save Lunch Policy'}</button>
+          </form>
+        </article>
       </div>
 
       <div className="section-heading"><div><h2>Employees</h2><p>Enrollment codes are visible only when created in this browser session.</p></div></div>
@@ -237,7 +287,7 @@ export default function Payroll() {
             {events.map((event) => (
               <tr key={event._id}>
                 <td><strong>{event.employeeName}</strong></td>
-                <td>{eventLabels[event.eventType]}</td>
+                <td>{eventLabels[event.eventType]}{event.note ? <span>{event.note}</span> : null}</td>
                 <td>{formatTime(event.occurredAt)}</td>
                 <td>{event.locationName}</td>
                 <td><span className="status-pill">{event.source.toUpperCase()}</span></td>

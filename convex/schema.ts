@@ -196,5 +196,39 @@ export default defineSchema({
     createdAt: v.number()
   })
     .index('by_employee_time', ['employeeId', 'occurredAt'])
-    .index('by_time', ['occurredAt'])
+    .index('by_time', ['occurredAt']),
+  timeClockCorrections: defineTable({
+    employeeId: v.id('timeClockEmployees'),
+    dayStartAt: v.number(),
+    dayEndAt: v.number(),
+    previousEvents: v.array(v.object({
+      eventId: v.string(),
+      eventType: v.union(
+        v.literal('clock_in'),
+        v.literal('lunch_start'),
+        v.literal('lunch_end'),
+        v.literal('clock_out')
+      ),
+      occurredAt: v.number(),
+      source: v.union(v.literal('nfc'), v.literal('admin')),
+      note: v.optional(v.string())
+    })),
+    correctedEvents: v.array(v.object({
+      eventId: v.string(),
+      eventType: v.union(
+        v.literal('clock_in'),
+        v.literal('lunch_start'),
+        v.literal('lunch_end'),
+        v.literal('clock_out')
+      ),
+      occurredAt: v.number(),
+      source: v.union(v.literal('nfc'), v.literal('admin')),
+      note: v.optional(v.string())
+    })),
+    reason: v.string(),
+    correctedBy: v.id('users'),
+    createdAt: v.number()
+  })
+    .index('by_employee_day', ['employeeId', 'dayStartAt'])
+    .index('by_created_at', ['createdAt'])
 })

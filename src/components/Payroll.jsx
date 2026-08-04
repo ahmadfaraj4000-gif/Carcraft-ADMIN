@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import { downloadPayrollPdf } from '../payrollPdf'
 
 const CLOCK_ORIGIN = 'https://carcraftautobodytowing.com/clock.html'
 
@@ -58,11 +59,25 @@ function formatEasternDateTimeInput(timestamp) {
 function parseEasternDateTimeInput(value) {
   const match = value.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2}))?$/)
   if (!match) return NaN
-  const target = Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3]), Number(match[4]), Number(match[5]), Number(match[6] || 0))
+  const target = Date.UTC(
+    Number(match[1]),
+    Number(match[2]) - 1,
+    Number(match[3]),
+    Number(match[4]),
+    Number(match[5]),
+    Number(match[6] || 0)
+  )
   let guess = target
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const parts = partsFor(guess)
-    const represented = Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day), Number(parts.hour), Number(parts.minute), Number(parts.second))
+    const represented = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second)
+    )
     guess += target - represented
   }
   return guess
@@ -105,7 +120,8 @@ function getEasternWeekBounds(timestamp) {
   const parts = partsFor(timestamp)
   const weekdayIndex = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].indexOf(parts.weekday)
   const date = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day)))
-  date.setUTCDate(date.getUTCDate() - ((weekdayIndex + 1) % 7))
+  const daysSincePayrollAnchor = weekdayIndex === 6 ? 7 : weekdayIndex === 0 ? 8 : weekdayIndex + 1
+  date.setUTCDate(date.getUTCDate() - daysSincePayrollAnchor)
   const startAt = easternMidnightUtc(date.getUTCFullYear(), date.getUTCMonth() + 1, date.getUTCDate())
   const dayStarts = Array.from({ length: 6 }, (_, index) => {
     const day = new Date(date)
@@ -113,6 +129,13 @@ function getEasternWeekBounds(timestamp) {
     return easternMidnightUtc(day.getUTCFullYear(), day.getUTCMonth() + 1, day.getUTCDate())
   })
   return { startAt, endAt: dayStarts[5], dayStarts }
+}
+
+function shiftEasternWeeks(timestamp, weekOffset) {
+  if (!weekOffset) return timestamp
+  const parts = partsFor(timestamp)
+  const shiftedDate = new Date(Date.UTC(Number(parts.year), Number(parts.month) - 1, Number(parts.day) + weekOffset * 7))
+  return easternMidnightUtc(shiftedDate.getUTCFullYear(), shiftedDate.getUTCMonth() + 1, shiftedDate.getUTCDate())
 }
 
 function formatHours(milliseconds) {
@@ -126,7 +149,12 @@ function formatWeekRange(dayStarts) {
 }
 
 function formatDayHeading(timestamp) {
-  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short', month: 'numeric', day: 'numeric' }).format(new Date(timestamp))
+  return new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    month: 'numeric',
+    day: 'numeric'
+  }).format(new Date(timestamp))
 }
 
 function easternDateKey(timestamp) {
@@ -142,13 +170,42 @@ function formatCalendarHours(milliseconds) {
   return minutes ? `${hours}h ${minutes}m` : `${hours}h`
 }
 
+function formatEasternTimeInput(timestamp) {
+  const parts = partsFor(timestamp)
+  return `${String(parts.hour).padStart(2, '0')}:${String(parts.minute).padStart(2, '0')}`
+}
+
+function timestampForEasternDayTime(dayStartAt, time) {
+  const parts = partsFor(dayStartAt)
+  return parseEasternDateTimeInput(`${parts.year}-${String(parts.month).padStart(2, '0')}-${String(parts.day).padStart(2, '0')}T${time}:00`)
+}
+
+function workedMillisecondsForTimeline(events) {
+  let workedMilliseconds = 0
+  let workingSince = null
+  const sortedEvents = [...events].filter((event) => Number.isFinite(event.occurredAt)).sort((left, right) => left.occurredAt - right.occurredAt)
+  for (const event of sortedEvents) {
+    if (event.eventType === 'clock_in' || event.eventType === 'lunch_end') {
+      if (workingSince === null) workingSince = event.occurredAt
+    } else if (workingSince !== null) {
+      workedMilliseconds += Math.max(0, event.occurredAt - workingSince)
+      workingSince = null
+    }
+  }
+  return workedMilliseconds
+}
+
 function requestBrowserLocation() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
       reject(new Error('This device does not support location services.'))
       return
     }
-    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 })
+    navigator.geolocation.getCurrentPosition(resolve, reject, {
+      enableHighAccuracy: true,
+      timeout: 15000,
+      maximumAge: 0
+    })
   })
 }
 
@@ -164,7 +221,7 @@ export default function Payroll() {
   const [payrollView, setPayrollView] = useState('calendar')
   const [clockNow, setClockNow] = useState(() => Date.now())
   const [selectedWeekOffset, setSelectedWeekOffset] = useState(0)
-  const selectedWeekReference = useMemo(() => clockNow + selectedWeekOffset * 7 * 24 * 60 * 60 * 1000, [clockNow, selectedWeekOffset])
+  const selectedWeekReference = useMemo(() => shiftEasternWeeks(clockNow, selectedWeekOffset), [clockNow, selectedWeekOffset])
   const weekBounds = useMemo(() => getEasternWeekBounds(selectedWeekReference), [selectedWeekReference])
   const weeklySummary = useQuery(api.timeClock.adminWeeklySummary, {
     ...weekBounds,
@@ -175,6 +232,7 @@ export default function Payroll() {
   const setEmployeeActive = useMutation(api.timeClock.setEmployeeActive)
   const deleteEmployee = useMutation(api.timeClock.deleteEmployee)
   const adminRecordEvent = useMutation(api.timeClock.adminRecordEvent)
+  const adminReplaceWorkday = useMutation(api.timeClock.adminReplaceWorkday)
   const updateLunchSettings = useMutation(api.timeClock.updateLunchSettings)
   const updateGeofenceSettings = useMutation(api.timeClock.updateGeofenceSettings)
   const [employeeName, setEmployeeName] = useState('')
@@ -191,6 +249,11 @@ export default function Payroll() {
   const [managerOccurredAt, setManagerOccurredAt] = useState('')
   const [managerNote, setManagerNote] = useState('')
   const [savingManagerAction, setSavingManagerAction] = useState(false)
+  const [editingWorkday, setEditingWorkday] = useState(null)
+  const [workdayRecords, setWorkdayRecords] = useState([])
+  const [correctionReason, setCorrectionReason] = useState('')
+  const [savingCorrection, setSavingCorrection] = useState(false)
+  const [downloadingSchedule, setDownloadingSchedule] = useState(false)
   const [geofenceEnabled, setGeofenceEnabled] = useState(false)
   const [geofenceAddress, setGeofenceAddress] = useState('8 South St, West Hartford, CT 06110')
   const [geofenceLatitude, setGeofenceLatitude] = useState(null)
@@ -216,6 +279,13 @@ export default function Payroll() {
   const weeklyTotal = weeklyEmployees.reduce((total, employee) => total + employee.workedMilliseconds, 0)
   const dailyTotals = weekBounds.dayStarts.slice(0, 5).map((_, dayIndex) => weeklyEmployees.reduce((total, employee) => total + (employee.dailyMilliseconds?.[dayIndex] || 0), 0))
   const todayKey = easternDateKey(clockNow)
+  const editingWorkdayHours = useMemo(() => {
+    if (!editingWorkday) return 0
+    return workedMillisecondsForTimeline(workdayRecords.map((record) => ({
+      eventType: record.eventType,
+      occurredAt: timestampForEasternDayTime(editingWorkday.dayStartAt, record.time)
+    })))
+  }, [editingWorkday, workdayRecords])
 
   useEffect(() => {
     if (!dashboard?.settings) return
@@ -314,6 +384,7 @@ export default function Payroll() {
       setError('Enter a valid Eastern Time for this clock action.')
       return
     }
+
     setError('')
     setNotice('')
     setSavingManagerAction(true)
@@ -330,6 +401,93 @@ export default function Payroll() {
       setError(requestError?.data || requestError?.message || 'The manager clock action could not be recorded.')
     } finally {
       setSavingManagerAction(false)
+    }
+  }
+
+  function openWorkdayEditor(employee, dayIndex) {
+    const dayStartAt = weekBounds.dayStarts[dayIndex]
+    const dayEndAt = weekBounds.dayStarts[dayIndex + 1]
+    const records = weeklyEvents
+      .filter((event) => String(event.employeeId) === String(employee.employeeId) && event.occurredAt >= dayStartAt && event.occurredAt < dayEndAt)
+      .sort((left, right) => left.occurredAt - right.occurredAt)
+      .map((event) => ({ key: String(event._id), eventType: event.eventType, time: formatEasternTimeInput(event.occurredAt) }))
+    setError('')
+    setNotice('')
+    setEditingWorkday({ employee, dayIndex, dayStartAt, dayEndAt })
+    setWorkdayRecords(records)
+    setCorrectionReason('')
+  }
+
+  function updateWorkdayRecord(key, field, value) {
+    setWorkdayRecords((current) => current.map((record) => record.key === key ? { ...record, [field]: value } : record))
+  }
+
+  function addWorkdayRecord() {
+    const sorted = [...workdayRecords].sort((left, right) => left.time.localeCompare(right.time))
+    const latest = sorted[sorted.length - 1]
+    const nextType = !latest || latest.eventType === 'clock_out'
+      ? 'clock_in'
+      : latest.eventType === 'lunch_start'
+        ? 'lunch_end'
+        : 'clock_out'
+    const nextTime = latest
+      ? (() => {
+          const [hour, minute] = latest.time.split(':').map(Number)
+          const totalMinutes = Math.min(23 * 60 + 59, hour * 60 + minute + (latest.eventType === 'lunch_start' ? 30 : 60))
+          return `${String(Math.floor(totalMinutes / 60)).padStart(2, '0')}:${String(totalMinutes % 60).padStart(2, '0')}`
+        })()
+      : '09:00'
+    setWorkdayRecords((current) => [...current, { key: `new-${Date.now()}-${current.length}`, eventType: nextType, time: nextTime }])
+  }
+
+  async function saveWorkdayCorrection(event) {
+    event.preventDefault()
+    if (!editingWorkday) return
+    const reason = correctionReason.trim()
+    if (!reason) {
+      setError('Enter a reason for the payroll correction.')
+      return
+    }
+
+    setError('')
+    setNotice('')
+    setSavingCorrection(true)
+    try {
+      const result = await adminReplaceWorkday({
+        employeeId: editingWorkday.employee.employeeId,
+        dayStartAt: editingWorkday.dayStartAt,
+        dayEndAt: editingWorkday.dayEndAt,
+        events: workdayRecords.map((record) => ({
+          eventType: record.eventType,
+          occurredAt: timestampForEasternDayTime(editingWorkday.dayStartAt, record.time)
+        })),
+        reason
+      })
+      setNotice(`${result.employeeName}'s ${formatDayHeading(editingWorkday.dayStartAt)} payroll hours were corrected.`)
+      setEditingWorkday(null)
+    } catch (requestError) {
+      setError(requestError?.data || requestError?.message || 'The payroll correction could not be saved.')
+    } finally {
+      setSavingCorrection(false)
+    }
+  }
+
+  function downloadSchedule() {
+    if (!weeklySummary) return
+    setError('')
+    setDownloadingSchedule(true)
+    try {
+      downloadPayrollPdf({
+        dayStarts: weekBounds.dayStarts,
+        employees: weeklyEmployees,
+        dailyTotals,
+        weeklyTotal,
+        generatedAt: Date.now()
+      })
+    } catch (downloadError) {
+      setError(downloadError?.message || 'The payroll schedule could not be downloaded.')
+    } finally {
+      setDownloadingSchedule(false)
     }
   }
 
@@ -421,7 +579,9 @@ export default function Payroll() {
         pointAccuracyFeet: geofencePointAccuracyFeet ?? undefined,
         requiredActions: geofenceRequiredActions
       })
-      setNotice(geofenceEnabled ? `Location verification is enabled within ${geofenceRadiusFeet} feet of Car Craft.` : 'Location verification is disabled.')
+      setNotice(geofenceEnabled
+        ? `Location verification is enabled within ${geofenceRadiusFeet} feet of Car Craft.`
+        : 'Location verification is disabled.')
     } catch (requestError) {
       setError(requestError?.data || requestError?.message || 'Location settings could not be saved.')
     } finally {
@@ -474,11 +634,13 @@ export default function Payroll() {
 
       {payrollView === 'calendar' ? <>
       <div className="payroll-section payroll-overview-section">
-        <div className="payroll-section-header"><div><p className="eyebrow">Overview</p><h2>Today at a glance</h2></div></div>
+        <div className="payroll-section-header">
+          <div><p className="eyebrow">Overview</p><h2>Today at a glance</h2></div>
+        </div>
         <div className="stats-grid compact payroll-stats">
-          <article className="stat-card"><span>Clocked in now</span><strong>{stats.working}</strong><small>Currently working</small></article>
-          <article className="stat-card"><span>On lunch</span><strong>{stats.lunch}</strong><small>Lunch in progress</small></article>
-          <article className="stat-card"><span>Active employees</span><strong>{stats.active}</strong><small>Allowed to use the clock</small></article>
+        <article className="stat-card"><span>Clocked in now</span><strong>{stats.working}</strong><small>Currently working</small></article>
+        <article className="stat-card"><span>On lunch</span><strong>{stats.lunch}</strong><small>Lunch in progress</small></article>
+        <article className="stat-card"><span>Active employees</span><strong>{stats.active}</strong><small>Allowed to use the clock</small></article>
         <article className="stat-card"><span>Selected week entries</span><strong>{stats.entries}</strong><small>{formatWeekRange(weekBounds.dayStarts)}</small></article>
         </div>
       </div>
@@ -496,7 +658,14 @@ export default function Payroll() {
               </div>
               <div className="manager-clock-actions">
                 {managerActionsFor(employee.clockState).map((action) => (
-                  <button className={`ghost-btn small ${action === 'clock_out' ? 'manager-clock-out-btn' : ''}`} type="button" key={action} onClick={() => openManagerAction(employee, action)}>{eventLabels[action]}</button>
+                  <button
+                    className={`ghost-btn small ${action === 'clock_out' ? 'manager-clock-out-btn' : ''}`}
+                    type="button"
+                    key={action}
+                    onClick={() => openManagerAction(employee, action)}
+                  >
+                    {eventLabels[action]}
+                  </button>
                 ))}
               </div>
             </article>
@@ -508,66 +677,109 @@ export default function Payroll() {
       <div className="payroll-section weekly-hours-section">
         <div className="payroll-section-header">
           <div><p className="eyebrow">Weekly timesheet</p><h2>{formatWeekRange(weekBounds.dayStarts)}</h2><p>Daily paid hours for every employee. Lunch breaks are excluded.</p></div>
-          <div className="week-navigation" aria-label="Choose payroll week">
-            <button className="ghost-btn small" type="button" onClick={() => setSelectedWeekOffset((current) => current - 1)}>← Previous</button>
-            <button className="ghost-btn small" type="button" disabled={selectedWeekOffset === 0} onClick={() => setSelectedWeekOffset(0)}>This Week</button>
-            <button className="ghost-btn small" type="button" disabled={selectedWeekOffset === 0} onClick={() => setSelectedWeekOffset((current) => Math.min(0, current + 1))}>Next →</button>
-            <span className="weekly-reset-note">Resets Saturday at 12:00 a.m. ET</span>
+          <div className="weekly-header-actions">
+            <div className="week-navigation" aria-label="Choose payroll week">
+              <button className="ghost-btn small" type="button" onClick={() => setSelectedWeekOffset((current) => current - 1)}>← Previous</button>
+              <button className="ghost-btn small" type="button" disabled={selectedWeekOffset === 0} onClick={() => setSelectedWeekOffset(0)}>Current Period</button>
+              <button className="ghost-btn small" type="button" disabled={selectedWeekOffset === 0} onClick={() => setSelectedWeekOffset((current) => Math.min(0, current + 1))}>Next →</button>
+            </div>
+            <button className="primary-btn payroll-download-btn" type="button" disabled={weeklySummary === undefined || !weeklyEmployees.some((employee) => employee.workedMilliseconds > 0) || downloadingSchedule} onClick={downloadSchedule}>
+              {downloadingSchedule ? 'Preparing PDF…' : 'Download Schedule'}
+            </button>
+            <span className="weekly-reset-note">Saturday and Sunday show the completed Monday–Friday payroll period.</span>
           </div>
         </div>
         <div className="weekly-calendar-wrap">
           <table className="weekly-calendar-table">
-            <thead><tr>
-              <th className="weekly-employee-column">Employee</th>
-              {weekBounds.dayStarts.slice(0, 5).map((dayStart) => {
-                const isToday = easternDateKey(dayStart) === todayKey
-                return <th className={isToday ? 'weekly-today-column' : ''} key={dayStart}><strong>{formatDayHeading(dayStart)}</strong>{isToday ? <small>Today</small> : null}</th>
-              })}
-              <th className="weekly-total-column">Week total</th>
-            </tr></thead>
+            <thead>
+              <tr>
+                <th className="weekly-employee-column">Employee</th>
+                {weekBounds.dayStarts.slice(0, 5).map((dayStart) => {
+                  const isToday = easternDateKey(dayStart) === todayKey
+                  return <th className={isToday ? 'weekly-today-column' : ''} key={dayStart}><strong>{formatDayHeading(dayStart)}</strong>{isToday ? <small>Today</small> : null}</th>
+                })}
+                <th className="weekly-total-column">Week total</th>
+              </tr>
+            </thead>
             <tbody>
               {weeklySummary === undefined ? <tr><td className="weekly-calendar-loading" colSpan="7">Calculating daily hours…</td></tr> : null}
               {weeklyEmployees.map((employee) => (
                 <tr className={employee.active ? '' : 'weekly-employee-inactive'} key={employee.employeeId}>
                   <th className="weekly-employee-column" scope="row"><strong>{employee.employeeName}</strong><small>{employee.currentlyWorking ? 'Clocked in now' : employee.active ? 'Not clocked in' : 'Inactive'}</small></th>
-                  {weekBounds.dayStarts.slice(0, 5).map((dayStart, dayIndex) => <td className={easternDateKey(dayStart) === todayKey ? 'weekly-today-column' : ''} key={dayStart}><strong>{formatCalendarHours(employee.dailyMilliseconds?.[dayIndex] || 0)}</strong></td>)}
+                  {weekBounds.dayStarts.slice(0, 5).map((dayStart, dayIndex) => {
+                    const canEdit = weekBounds.dayStarts[dayIndex + 1] <= clockNow
+                    return (
+                      <td className={easternDateKey(dayStart) === todayKey ? 'weekly-today-column' : ''} key={dayStart}>
+                        {canEdit ? (
+                          <button className="weekly-hours-edit-btn" type="button" onClick={() => openWorkdayEditor(employee, dayIndex)}>
+                            <strong>{formatCalendarHours(employee.dailyMilliseconds?.[dayIndex] || 0)}</strong>
+                            <small>Edit</small>
+                          </button>
+                        ) : <strong>{formatCalendarHours(employee.dailyMilliseconds?.[dayIndex] || 0)}</strong>}
+                      </td>
+                    )
+                  })}
                   <td className="weekly-total-column"><strong>{formatHours(employee.workedMilliseconds)}</strong></td>
                 </tr>
               ))}
               {weeklySummary && !weeklyEmployees.length ? <tr><td className="weekly-calendar-loading" colSpan="7">Add an employee to begin weekly tracking.</td></tr> : null}
             </tbody>
-            {weeklySummary && weeklyEmployees.length ? <tfoot><tr>
-              <th className="weekly-employee-column" scope="row">Team total</th>
-              {dailyTotals.map((total, dayIndex) => <td className={easternDateKey(weekBounds.dayStarts[dayIndex]) === todayKey ? 'weekly-today-column' : ''} key={weekBounds.dayStarts[dayIndex]}><strong>{formatCalendarHours(total)}</strong></td>)}
-              <td className="weekly-total-column"><strong>{formatHours(weeklyTotal)}</strong></td>
-            </tr></tfoot> : null}
+            {weeklySummary && weeklyEmployees.length ? (
+              <tfoot><tr>
+                <th className="weekly-employee-column" scope="row">Team total</th>
+                {dailyTotals.map((total, dayIndex) => <td className={easternDateKey(weekBounds.dayStarts[dayIndex]) === todayKey ? 'weekly-today-column' : ''} key={weekBounds.dayStarts[dayIndex]}><strong>{formatCalendarHours(total)}</strong></td>)}
+                <td className="weekly-total-column"><strong>{formatHours(weeklyTotal)}</strong></td>
+              </tr></tfoot>
+            ) : null}
           </table>
         </div>
-        <p className="weekly-calendar-note">Hours update every minute while someone is clocked in. The display starts fresh each Saturday; detailed activity remains saved below.</p>
+        <p className="weekly-calendar-note">Hours update every minute while someone is clocked in. Each Monday-Friday period closes at midnight Saturday and remains available for corrections and payroll downloads.</p>
       </div>
       </> : null}
 
       {payrollView === 'configuration' ? <>
       <div className="payroll-section configuration-section-first">
-        <div className="payroll-section-header"><div><p className="eyebrow">Setup & policy</p><h2>How the clock operates</h2><p>Manage the NFC destination and lunch rules in one place.</p></div></div>
+        <div className="payroll-section-header">
+          <div><p className="eyebrow">Setup & policy</p><h2>How the clock operates</h2><p>Manage the NFC destination and lunch rules in one place.</p></div>
+        </div>
         <div className="payroll-settings-grid">
           <article className="setup-card clock-url-card">
-            <div><p className="eyebrow">Clock location</p><h3>{location?.name || 'Clock location not configured'}</h3><p>Program every wall tag with this URL. Tags open the clock but never store employee information.</p></div>
+            <div>
+              <p className="eyebrow">Clock location</p>
+              <h3>{location?.name || 'Clock location not configured'}</h3>
+              <p>Program every wall tag with this URL. Tags open the clock but never store employee information.</p>
+            </div>
             {clockUrl ? <code className="clock-url">{clockUrl}</code> : <div className="empty-command-card">Run the clock-location setup before programming tags.</div>}
             <button className="primary-btn" type="button" disabled={!clockUrl} onClick={copyClockUrl}>{clockIcon} Copy NFC URL</button>
           </article>
+
           <article className="setup-card lunch-policy-card">
-            <div><p className="eyebrow">Lunch policy</p><h3>Automatic lunch end</h3><p>Optionally return employees to clocked-in status after a fixed break.</p></div>
+            <div>
+              <p className="eyebrow">Lunch policy</p>
+              <h3>Automatic lunch end</h3>
+              <p>Optionally return employees to clocked-in status after a fixed break.</p>
+            </div>
             <form className="lunch-policy-form" onSubmit={saveLunchSettings}>
-              <label className="lunch-toggle"><input type="checkbox" checked={automaticLunchEnabled} onChange={(event) => setAutomaticLunchEnabled(event.target.checked)} /><span>Enable automatic lunch end</span></label>
-              <label className="lunch-duration"><span>Lunch duration</span><div><input type="number" min="15" max="180" step="1" disabled={!automaticLunchEnabled} value={automaticLunchMinutes} onChange={(event) => setAutomaticLunchMinutes(event.target.value)} /><strong>minutes</strong></div></label>
+              <label className="lunch-toggle">
+                <input type="checkbox" checked={automaticLunchEnabled} onChange={(event) => setAutomaticLunchEnabled(event.target.checked)} />
+                <span>Enable automatic lunch end</span>
+              </label>
+              <label className="lunch-duration">
+                <span>Lunch duration</span>
+                <div><input type="number" min="15" max="180" step="1" disabled={!automaticLunchEnabled} value={automaticLunchMinutes} onChange={(event) => setAutomaticLunchMinutes(event.target.value)} /><strong>minutes</strong></div>
+              </label>
               <p className="control-note">Employees can still end lunch early. When disabled, they must tap End Lunch themselves.</p>
               <button className="primary-btn" type="submit" disabled={savingLunchSettings || (automaticLunchEnabled && (Number(automaticLunchMinutes) < 15 || Number(automaticLunchMinutes) > 180))}>{savingLunchSettings ? 'Saving…' : 'Save Lunch Policy'}</button>
             </form>
           </article>
+
           <article className="setup-card notification-policy-card">
             <div className="notification-card-heading">
-              <div><p className="eyebrow">Pushover alerts</p><h3>Manager time-clock notifications</h3><p>The configured manager receives the employee name and Eastern Time for every clock-in, lunch action, and clock-out.</p></div>
+              <div>
+                <p className="eyebrow">Pushover alerts</p>
+                <h3>Manager time-clock notifications</h3>
+                <p>The configured manager receives the employee name and Eastern Time for every clock-in, lunch action, and clock-out.</p>
+              </div>
               <span className={`integration-badge ${dashboard.settings.pushoverConfigured ? 'integration-badge-live' : ''}`}>{dashboard.settings.pushoverConfigured ? 'Connected' : 'Needs setup'}</span>
             </div>
             <div className="notification-policy-list">
@@ -577,22 +789,34 @@ export default function Payroll() {
             </div>
             {!dashboard.settings.pushoverConfigured ? <p className="control-note notification-warning">Add PUSHOVER_API_TOKEN and PUSHOVER_USER_KEY to the Convex deployment to activate delivery.</p> : null}
           </article>
+
           <article className="setup-card geofence-policy-card">
             <div className="geofence-card-heading">
-              <div><p className="eyebrow">Location verification</p><h3>Require employees to be on site</h3><p>The phone’s location is checked by the server before protected actions are recorded. Exact employee coordinates are not saved.</p></div>
+              <div>
+                <p className="eyebrow">Location verification</p>
+                <h3>Require employees to be on site</h3>
+                <p>The phone’s location is checked by the server before protected actions are recorded. Exact employee coordinates are not saved.</p>
+              </div>
               <span className={`integration-badge ${geofenceEnabled ? 'integration-badge-live' : ''}`}>{geofenceEnabled ? 'Enabled' : 'Disabled'}</span>
             </div>
             <form className="geofence-policy-form" onSubmit={saveGeofenceSettings}>
-              <label className="lunch-toggle"><input type="checkbox" checked={geofenceEnabled} onChange={(event) => setGeofenceEnabled(event.target.checked)} /><span>Enable on-site location verification</span></label>
+              <label className="lunch-toggle">
+                <input type="checkbox" checked={geofenceEnabled} onChange={(event) => setGeofenceEnabled(event.target.checked)} />
+                <span>Enable on-site location verification</span>
+              </label>
+
               <div className="geofence-config-grid">
                 <div className="geofence-location-panel">
                   <label>Shop address<input value={geofenceAddress} maxLength="160" onChange={(event) => setGeofenceAddress(event.target.value)} /></label>
                   <div className={`shop-point-status ${geofenceLatitude !== null && geofenceLongitude !== null ? 'ready' : ''}`}>
                     <strong>{geofenceLatitude !== null && geofenceLongitude !== null ? 'Shop point saved' : 'Shop point required'}</strong>
-                    <span>{geofenceLatitude !== null && geofenceLongitude !== null ? `Center point is ready${geofencePointAccuracyFeet ? ` · captured within ${geofencePointAccuracyFeet} ft` : ''}.` : 'Stand at Car Craft and capture this device’s current location.'}</span>
+                    <span>{geofenceLatitude !== null && geofenceLongitude !== null
+                      ? `Center point is ready${geofencePointAccuracyFeet ? ` · captured within ${geofencePointAccuracyFeet} ft` : ''}.`
+                      : 'Stand at Car Craft and capture this device’s current location.'}</span>
                   </div>
                   <button className="ghost-btn" type="button" disabled={capturingShopLocation} onClick={captureShopLocation}>{capturingShopLocation ? 'Finding Location…' : 'Set Shop Location From This Device'}</button>
                 </div>
+
                 <div className="geofence-rules-panel">
                   <div className="geofence-number-grid">
                     <label>Allowed radius<input type="number" min="100" max="1000" step="25" value={geofenceRadiusFeet} onChange={(event) => setGeofenceRadiusFeet(event.target.value)} /><span>feet from the saved shop point</span></label>
@@ -606,6 +830,7 @@ export default function Payroll() {
                   </fieldset>
                 </div>
               </div>
+
               <p className="control-note geofence-privacy-note">Recommended: Clock In only, 350-foot radius, and 200-foot maximum uncertainty. Employees must grant browser location permission when prompted.</p>
               <button className="primary-btn" type="submit" disabled={savingGeofence || (geofenceEnabled && (geofenceLatitude === null || geofenceLongitude === null || geofenceRequiredActions.length === 0))}>{savingGeofence ? 'Saving…' : 'Save Location Policy'}</button>
             </form>
@@ -614,7 +839,9 @@ export default function Payroll() {
       </div>
 
       <div className="payroll-section">
-        <div className="payroll-section-header"><div><p className="eyebrow">Employees</p><h2>Access & enrollment</h2><p>Add staff, issue phone codes, or remove old accounts and records.</p></div></div>
+        <div className="payroll-section-header payroll-employee-header">
+          <div><p className="eyebrow">Employees</p><h2>Access & enrollment</h2><p>Add staff, issue phone codes, or remove old accounts and records.</p></div>
+        </div>
         <article className="setup-card employee-create-panel">
           <div><h3>Add an employee</h3><p>Create a one-time phone enrollment code that expires in seven days.</p></div>
           <form className="employee-create-form employee-create-inline" onSubmit={create}>
@@ -622,6 +849,7 @@ export default function Payroll() {
             <button className="primary-btn" disabled={busyEmployee === 'new' || !employeeName.trim()} type="submit">{busyEmployee === 'new' ? 'Adding…' : 'Add Employee'}</button>
           </form>
         </article>
+
         <div className="table-wrap employee-management-wrap">
           <table className="employee-management-table">
             <thead><tr><th>Employee</th><th>Current status</th><th>Last activity</th><th>Enrollment</th><th>Actions</th></tr></thead>
@@ -631,7 +859,13 @@ export default function Payroll() {
                   <td><div className="employee-name-cell"><strong>{employee.name}</strong><small>{employee.active ? 'Access enabled' : 'Access disabled'}</small></div></td>
                   <td><span className={`status-pill clock-${employee.clockState}`}>{employee.active ? stateLabels[employee.clockState] : 'Inactive'}</span></td>
                   <td>{employee.lastEventAt ? formatTime(employee.lastEventAt) : <span className="muted">No entries yet</span>}</td>
-                  <td>{issuedCodes[employee._id] ? <div className="employee-code-cell"><strong>{issuedCodes[employee._id]}</strong><small>Expires in 7 days</small></div> : employee.enrollmentPending ? <span className="status-pill enrollment-pending-pill">Code active</span> : <span className="muted">Phone connected</span>}</td>
+                  <td>
+                    {issuedCodes[employee._id] ? (
+                      <div className="employee-code-cell"><strong>{issuedCodes[employee._id]}</strong><small>Expires in 7 days</small></div>
+                    ) : employee.enrollmentPending ? (
+                      <span className="status-pill enrollment-pending-pill">Code active</span>
+                    ) : <span className="muted">Phone connected</span>}
+                  </td>
                   <td><div className="employee-actions">
                     <button className="ghost-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => regenerate(employee)}>New Code</button>
                     <button className="ghost-btn small" type="button" disabled={busyEmployee === employee._id} onClick={() => toggleEmployee(employee)}>{employee.active ? 'Deactivate' : 'Reactivate'}</button>
@@ -658,7 +892,11 @@ export default function Payroll() {
             {weeklyEvents.map((event) => (
               <tr key={event._id}>
                 <td><strong>{event.employeeName}</strong></td>
-                <td>{eventLabels[event.eventType]}{event.locationVerified ? <span className="verified-location-note">On-site verified · {Math.round(event.locationDistanceMeters * 3.28084)} ft from shop</span> : null}{event.note ? <span>{event.note}</span> : null}</td>
+                <td>
+                  {eventLabels[event.eventType]}
+                  {event.locationVerified ? <span className="verified-location-note">On-site verified · {Math.round(event.locationDistanceMeters * 3.28084)} ft from shop</span> : null}
+                  {event.note ? <span>{event.note}</span> : null}
+                </td>
                 <td>{formatTime(event.occurredAt)}</td>
                 <td>{event.locationName}</td>
                 <td><span className="status-pill">{event.source.toUpperCase()}</span></td>
@@ -680,12 +918,55 @@ export default function Payroll() {
             </div>
             {error ? <div className="admin-notice error">{error}</div> : null}
             <form className="manager-clock-form" onSubmit={confirmManagerAction}>
-              <label><span>Effective time (Eastern)</span><input type="datetime-local" step="1" required value={managerOccurredAt} onChange={(event) => setManagerOccurredAt(event.target.value)} /></label>
-              <label><span>Manager note <small>Optional</small></span><textarea value={managerNote} maxLength="240" rows="3" placeholder="Example: Employee forgot to clock out before leaving." onChange={(event) => setManagerNote(event.target.value)} /></label>
+              <label>
+                <span>Effective time (Eastern)</span>
+                <input type="datetime-local" step="1" required value={managerOccurredAt} onChange={(event) => setManagerOccurredAt(event.target.value)} />
+              </label>
+              <label>
+                <span>Manager note <small>Optional</small></span>
+                <textarea value={managerNote} maxLength="240" rows="3" placeholder="Example: Employee forgot to clock out before leaving." onChange={(event) => setManagerNote(event.target.value)} />
+              </label>
               <p className="control-note">This creates a permanent activity entry marked ADMIN and sends the manager’s Pushover alert.</p>
               <div className="modal-actions">
                 <button className="ghost-btn" type="button" disabled={savingManagerAction} onClick={() => setManagerAction(null)}>Cancel</button>
                 <button className="primary-btn" type="submit" disabled={savingManagerAction}>{savingManagerAction ? 'Recording…' : `Confirm ${eventLabels[managerAction.eventType]}`}</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      ) : null}
+
+      {editingWorkday ? (
+        <div className="modal-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !savingCorrection) setEditingWorkday(null) }}>
+          <section className="modal-card payroll-correction-modal" role="dialog" aria-modal="true" aria-labelledby="payroll-correction-title">
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Payroll correction</p>
+                <h2 id="payroll-correction-title">{editingWorkday.employee.employeeName} · {formatDayHeading(editingWorkday.dayStartAt)}</h2>
+                <p>Edit the clock records below. Paid time recalculates automatically.</p>
+              </div>
+              <span className="correction-hours-total">{formatHours(editingWorkdayHours)}</span>
+            </div>
+            {error ? <div className="admin-notice error">{error}</div> : null}
+            <form className="payroll-correction-form" onSubmit={saveWorkdayCorrection}>
+              <div className="correction-records">
+                {workdayRecords.map((record) => (
+                  <div className="correction-record-row" key={record.key}>
+                    <label><span>Action</span><select value={record.eventType} onChange={(event) => updateWorkdayRecord(record.key, 'eventType', event.target.value)}>
+                      {Object.entries(eventLabels).map(([value, label]) => <option value={value} key={value}>{label}</option>)}
+                    </select></label>
+                    <label><span>Eastern time</span><input type="time" step="60" required value={record.time} onChange={(event) => updateWorkdayRecord(record.key, 'time', event.target.value)} /></label>
+                    <button className="delete-btn small correction-remove-btn" type="button" onClick={() => setWorkdayRecords((current) => current.filter((item) => item.key !== record.key))}>Remove</button>
+                  </div>
+                ))}
+                {!workdayRecords.length ? <div className="empty-command-card">No paid hours will be recorded for this employee on this day.</div> : null}
+              </div>
+              <button className="ghost-btn small correction-add-btn" type="button" onClick={addWorkdayRecord}>+ Add clock record</button>
+              <label><span>Reason for correction</span><textarea maxLength="240" required value={correctionReason} onChange={(event) => setCorrectionReason(event.target.value)} placeholder="Example: Corrected missed clock-out using the manager's written record." /></label>
+              <p className="form-help">The original and corrected clock records are retained in the payroll audit log.</p>
+              <div className="modal-actions">
+                <button className="ghost-btn" type="button" disabled={savingCorrection} onClick={() => setEditingWorkday(null)}>Cancel</button>
+                <button className="primary-btn" type="submit" disabled={savingCorrection}>{savingCorrection ? 'Saving…' : 'Save Correction'}</button>
               </div>
             </form>
           </section>

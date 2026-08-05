@@ -442,6 +442,120 @@ export const adminRecordEvent = mutation({
   }
 })
 
+export const adminReplaceWorkday = mutation({
+  args: {
+    employeeId: v.id('timeClockEmployees'),
+    dayStartAt: v.number(),
+    dayEndAt: v.number(),
+    events: v.array(v.object({
+      eventType,
+      occurredAt: v.number()
+    })),
+    reason: v.string()
+  },
+  handler: async (ctx, args) => {
+    const correctedBy = await requireAdmin(ctx)
+    const now = Date.now()
+    const dayStartAt = Math.round(args.dayStartAt)
+    const dayEndAt = Math.round(args.dayEndAt)
+    const dayLength = dayEndAt - dayStartAt
+    const reason = args.reason.trim()
+
+    if (!reason || reason.length > 240) throw new Error('Enter a correction note of 240 characters or fewer.')
+    if (dayLength < 20 * 60 * 60 * 1000 || dayLength > 28 * 60 * 60 * 1000) {
+      throw new Error('Invalid payroll day range.')
+    }
+    if (dayEndAt > now) throw new Error('Only completed payroll days can be corrected.')
+    if (dayStartAt < now - 90 * 24 * 60 * 60 * 1000) {
+      throw new Error('Payroll corrections must be within the last 90 days.')
+    }
+    if (args.events.length > 24) throw new Error('A payroll day cannot contain more than 24 clock records.')
+
+    const employee = await ctx.db.get(args.employeeId)
+    if (!employee) throw new Error('That employee no longer exists.')
+
+    const correctedTimeline = [...args.events]
+      .map((event) => ({ ...event, occurredAt: Math.round(event.occurredAt) }))
+      .sort((left, right) => left.occurredAt - right.occurredAt)
+
+    let timelineState: ReturnType<typeof stateAfter> = 'off_shift'
+    let previousTime = dayStartAt - 1
+    for (const event of correctedTimeline) {
+      if (!Number.isFinite(event.occurredAt) || event.occurredAt < dayStartAt || event.occurredAt >= dayEndAt) {
+        throw new Error('Every corrected clock record must be inside the selected payroll day.')
+      }
+      if (event.occurredAt <= previousTime) throw new Error('Corrected clock times must be in chronological order.')
+      if (!adminValidActions(timelineState).includes(event.eventType)) {
+        throw new Error('The corrected clock sequence must start with a clock-in and follow a valid work/lunch order.')
+      }
+      timelineState = stateAfter(event.eventType)
+      previousTime = event.occurredAt
+    }
+    if (timelineState !== 'off_shift') throw new Error('A completed payroll day must end with a clock-out.')
+
+    const [previousEvents, locations] = await Promise.all([
+      ctx.db
+        .query('timeClockEvents')
+        .withIndex('by_employee_time', (q) => q.eq('employeeId', args.employeeId).gte('occurredAt', dayStartAt).lt('occurredAt', dayEndAt))
+        .order('asc')
+        .collect(),
+      ctx.db.query('timeClockLocations').collect()
+    ])
+    const location = locations.find((row) => row.active) || (previousEvents[0] ? await ctx.db.get(previousEvents[0].locationId) : null)
+    if (correctedTimeline.length && !location) throw new Error('No clock location is available for corrected records.')
+
+    const snapshot = (event: any) => ({
+      eventId: String(event._id),
+      eventType: event.eventType,
+      occurredAt: event.occurredAt,
+      source: event.source,
+      note: event.note
+    })
+    const previousSnapshot = previousEvents.map(snapshot)
+
+    for (const event of previousEvents) await ctx.db.delete(event._id)
+
+    const correctionNote = `Payroll correction: ${reason}`
+    const correctedSnapshot = []
+    for (const event of correctedTimeline) {
+      const eventId = await ctx.db.insert('timeClockEvents', {
+        employeeId: args.employeeId,
+        eventType: event.eventType,
+        occurredAt: event.occurredAt,
+        locationId: location!._id,
+        adminUserId: correctedBy,
+        source: 'admin',
+        note: correctionNote,
+        createdAt: now
+      })
+      correctedSnapshot.push({
+        eventId: String(eventId),
+        eventType: event.eventType,
+        occurredAt: event.occurredAt,
+        source: 'admin' as const,
+        note: correctionNote
+      })
+    }
+
+    await ctx.db.insert('timeClockCorrections', {
+      employeeId: args.employeeId,
+      dayStartAt,
+      dayEndAt,
+      previousEvents: previousSnapshot,
+      correctedEvents: correctedSnapshot,
+      reason,
+      correctedBy,
+      createdAt: now
+    })
+
+    return {
+      employeeName: employee.name,
+      previousEventCount: previousSnapshot.length,
+      correctedEventCount: correctedSnapshot.length
+    }
+  }
+})
+
 export const notifyMissingClockOuts = internalMutation({
   args: {},
   handler: async (ctx) => {
@@ -801,7 +915,7 @@ export const deleteEmployee = mutation({
     const employee = await ctx.db.get(employeeId)
     if (!employee) throw new Error('That employee no longer exists.')
 
-    const [sessions, events] = await Promise.all([
+    const [sessions, events, corrections] = await Promise.all([
       ctx.db
         .query('timeClockSessions')
         .withIndex('by_employee', (q) => q.eq('employeeId', employeeId))
@@ -809,9 +923,14 @@ export const deleteEmployee = mutation({
       ctx.db
         .query('timeClockEvents')
         .withIndex('by_employee_time', (q) => q.eq('employeeId', employeeId))
+        .collect(),
+      ctx.db
+        .query('timeClockCorrections')
+        .withIndex('by_employee_day', (q) => q.eq('employeeId', employeeId))
         .collect()
     ])
 
+    for (const correction of corrections) await ctx.db.delete(correction._id)
     for (const event of events) await ctx.db.delete(event._id)
     for (const session of sessions) await ctx.db.delete(session._id)
     await ctx.db.delete(employeeId)
@@ -819,7 +938,8 @@ export const deleteEmployee = mutation({
     return {
       employeeName: employee.name,
       deletedSessions: sessions.length,
-      deletedEvents: events.length
+      deletedEvents: events.length,
+      deletedCorrections: corrections.length
     }
   }
 })

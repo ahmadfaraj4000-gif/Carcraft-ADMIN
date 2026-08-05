@@ -45,6 +45,8 @@ export default defineSchema({
     damageType: v.string(),
     severity: v.string(),
     description: v.string(),
+    rentalVehicleInterest: v.optional(v.boolean()),
+    towAssistanceInterest: v.optional(v.boolean()),
     status: v.union(
       v.literal('new'),
       v.literal('contacted'),
@@ -70,6 +72,8 @@ export default defineSchema({
     email: v.optional(v.string()),
     ...vehicleInfo,
     serviceRequested: v.string(),
+    rentalVehicleInterest: v.optional(v.boolean()),
+    towAssistanceInterest: v.optional(v.boolean()),
     appointmentDate: v.string(),
     appointmentTime: v.string(),
     status: v.union(

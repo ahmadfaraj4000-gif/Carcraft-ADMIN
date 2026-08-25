@@ -1,5 +1,6 @@
 import { mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { getAdminUserId, requireAdmin } from './lib/requireAdmin'
 
 function sameText(a?: string, b?: string) {
   return String(a || '').trim().toLowerCase() === String(b || '').trim().toLowerCase()
@@ -7,7 +8,10 @@ function sameText(a?: string, b?: string) {
 
 export const list = query({
   args: {},
-  handler: async (ctx) => ctx.db.query('customers').order('desc').collect()
+  handler: async (ctx) => {
+    if (!await getAdminUserId(ctx)) return []
+    return ctx.db.query('customers').order('desc').collect()
+  }
 })
 
 export const upsertFromContact = mutation({
@@ -28,6 +32,7 @@ export const upsertFromContact = mutation({
     notes: v.optional(v.string())
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx)
     const now = Date.now()
     const rows = await ctx.db.query('customers').collect()
     const existing = rows.find((customer) =>
@@ -69,5 +74,8 @@ export const upsertFromContact = mutation({
 
 export const remove = mutation({
   args: { id: v.id('customers') },
-  handler: async (ctx, { id }) => ctx.db.delete(id)
+  handler: async (ctx, { id }) => {
+    await requireAdmin(ctx)
+    return ctx.db.delete(id)
+  }
 })

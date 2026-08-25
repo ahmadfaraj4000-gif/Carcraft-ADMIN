@@ -1,5 +1,6 @@
 import { mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { getAdminUserId, requireAdmin } from './lib/requireAdmin'
 
 async function upsertCustomer(ctx: any, args: any, appointmentId: any, source = 'appointment') {
   const now = Date.now()
@@ -40,7 +41,10 @@ async function upsertCustomer(ctx: any, args: any, appointmentId: any, source = 
 
 export const list = query({
   args: {},
-  handler: async (ctx) => ctx.db.query('appointments').order('desc').collect()
+  handler: async (ctx) => {
+    if (!await getAdminUserId(ctx)) return []
+    return ctx.db.query('appointments').order('desc').collect()
+  }
 })
 
 export const create = mutation({
@@ -63,6 +67,7 @@ export const create = mutation({
     note: v.optional(v.string())
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx)
     const now = Date.now()
     const id = await ctx.db.insert('appointments', {
       ...args,
@@ -85,6 +90,7 @@ export const convertLead = mutation({
     appointmentTime: v.string()
   },
   handler: async (ctx, { leadId, appointmentDate, appointmentTime }) => {
+    await requireAdmin(ctx)
     const lead = await ctx.db.get(leadId)
     if (!lead) throw new Error('Lead not found')
     const now = Date.now()
@@ -124,6 +130,7 @@ export const update = mutation({
     appointmentTime: v.optional(v.string())
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx)
     const row = await ctx.db.get(args.id)
     if (!row) throw new Error('Appointment not found')
     await ctx.db.patch(args.id, {

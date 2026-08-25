@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useMutation } from 'convex/react'
+import { useAction, useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
 const initial = {
@@ -21,7 +21,7 @@ const initial = {
 }
 
 export default function PublicEstimateForm() {
-  const createLead = useMutation(api.estimateLeads.create)
+  const createLead = useAction(api.estimateLeads.createWithNotification)
   const getUploadUrl = useMutation(api.estimateLeads.generateUploadUrl)
   const [form, setForm] = useState(initial)
   const [files, setFiles] = useState([])

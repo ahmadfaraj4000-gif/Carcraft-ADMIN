@@ -1,5 +1,6 @@
 import { mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { getAdminUserId, requireAdmin } from './lib/requireAdmin'
 
 const photoArg = v.object({
   storageId: v.id('_storage'),
@@ -19,12 +20,16 @@ async function withUrls(ctx: any, row: any) {
 
 export const generateUploadUrl = mutation({
   args: {},
-  handler: async (ctx) => ctx.storage.generateUploadUrl()
+  handler: async (ctx) => {
+    await requireAdmin(ctx)
+    return ctx.storage.generateUploadUrl()
+  }
 })
 
 export const list = query({
   args: {},
   handler: async (ctx) => {
+    if (!await getAdminUserId(ctx)) return []
     const rows = await ctx.db.query('inventoryVehicles').order('desc').collect()
     return Promise.all(rows.map((row) => withUrls(ctx, row)))
   }
@@ -62,6 +67,7 @@ export const save = mutation({
     photos: v.array(photoArg)
   },
   handler: async (ctx, args) => {
+    await requireAdmin(ctx)
     const now = Date.now()
     const payload = { ...args, status: args.status as any, updatedAt: now }
     if (args.id) {
@@ -76,5 +82,8 @@ export const save = mutation({
 
 export const archive = mutation({
   args: { id: v.id('inventoryVehicles') },
-  handler: async (ctx, { id }) => ctx.db.patch(id, { status: 'archived', updatedAt: Date.now() })
+  handler: async (ctx, { id }) => {
+    await requireAdmin(ctx)
+    return ctx.db.patch(id, { status: 'archived', updatedAt: Date.now() })
+  }
 })

@@ -1,7 +1,7 @@
-import { getAuthUserId } from '@convex-dev/auth/server'
 import { internalMutation, mutation, query } from './_generated/server'
 import { internal } from './_generated/api'
 import { ConvexError, v } from 'convex/values'
+import { requireAdmin } from './lib/requireAdmin'
 
 const SESSION_LIFETIME_MS = 180 * 24 * 60 * 60 * 1000
 const DEFAULT_LUNCH_MINUTES = 60
@@ -96,12 +96,6 @@ function distanceMeters(latitudeA: number, longitudeA: number, latitudeB: number
   const haversine = Math.sin(latitudeDelta / 2) ** 2 +
     Math.cos(radians(latitudeA)) * Math.cos(radians(latitudeB)) * Math.sin(longitudeDelta / 2) ** 2
   return 2 * earthRadiusMeters * Math.asin(Math.sqrt(haversine))
-}
-
-async function requireAdmin(ctx: any) {
-  const userId = await getAuthUserId(ctx)
-  if (!userId) throw new Error('Admin authentication required')
-  return userId
 }
 
 async function locationForTag(ctx: any, tagCode: string) {

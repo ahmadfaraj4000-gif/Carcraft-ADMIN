@@ -94,10 +94,11 @@ export default function App() {
   const [navCollapsed, setNavCollapsed] = useState(false)
   const searchableTabs = ['leads', 'appointments', 'customers', 'inventory']
 
-  const leads = useQuery(api.estimateLeads.list) || []
-  const appointments = useQuery(api.appointments.list) || []
-  const customers = useQuery(api.customers.list) || []
-  const inventory = useQuery(api.inventory.list) || []
+  const authenticatedArgs = isAuthenticated ? {} : 'skip'
+  const leads = useQuery(api.estimateLeads.list, authenticatedArgs) || []
+  const appointments = useQuery(api.appointments.list, authenticatedArgs) || []
+  const customers = useQuery(api.customers.list, authenticatedArgs) || []
+  const inventory = useQuery(api.inventory.list, authenticatedArgs) || []
   const deleteCustomer = useMutation(api.customers.remove)
 
   const title = navItems.find(([key]) => key === activeTab)?.[1] || 'Dashboard'

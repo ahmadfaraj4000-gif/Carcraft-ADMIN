@@ -58,12 +58,45 @@ export default defineSchema({
     photos: v.array(photoRef),
     notes: v.array(note),
     archived: v.boolean(),
+    submissionKey: v.optional(v.string()),
+    submissionState: v.optional(v.union(
+      v.literal('pending_upload'),
+      v.literal('submitted')
+    )),
+    notificationStatus: v.optional(v.union(
+      v.literal('pending'),
+      v.literal('sent'),
+      v.literal('failed')
+    )),
+    notificationAttempts: v.optional(v.number()),
+    notificationLastError: v.optional(v.string()),
+    notificationSentAt: v.optional(v.number()),
+    submittedAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
     createdAt: v.number(),
     updatedAt: v.number()
-  }).index('by_status', ['status']).searchIndex('search_leads', {
+  })
+    .index('by_status', ['status'])
+    .index('by_submission_key', ['submissionKey'])
+    .index('by_submission_state', ['submissionState'])
+    .searchIndex('search_leads', {
     searchField: 'name',
     filterFields: ['status']
   }),
+  estimateLeadEvents: defineTable({
+    leadId: v.id('estimateLeads'),
+    eventType: v.union(
+      v.literal('lead_saved'),
+      v.literal('photo_attached'),
+      v.literal('submitted'),
+      v.literal('notification_sent'),
+      v.literal('notification_failed'),
+      v.literal('archived'),
+      v.literal('restored')
+    ),
+    detail: v.optional(v.string()),
+    createdAt: v.number()
+  }).index('by_lead', ['leadId']),
   appointments: defineTable({
     leadId: v.optional(v.id('estimateLeads')),
     customerId: v.optional(v.id('customers')),

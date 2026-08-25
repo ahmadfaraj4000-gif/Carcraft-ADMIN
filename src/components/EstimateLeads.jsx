@@ -51,6 +51,10 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <div className="command-topline">
                 <h3>{lead.name}</h3>
                 <span className={`status-pill status-${lead.status}`}>{statusLabel(lead.status)}</span>
+                {lead.submissionState === 'pending_upload' ? <span className="status-pill status-follow_up_needed">Saved · photos pending</span> : null}
+                {lead.notificationStatus === 'sent' ? <span className="status-pill status-booked">Pushover sent</span> : null}
+                {lead.notificationStatus === 'pending' ? <span className="status-pill status-follow_up_needed">Pushover pending</span> : null}
+                {lead.notificationStatus === 'failed' ? <span className="status-pill status-lost">Pushover failed</span> : null}
                 {lead.rentalVehicleInterest ? <span className="status-pill status-follow_up_needed">Rental help</span> : null}
                 {lead.towAssistanceInterest ? <span className="status-pill status-follow_up_needed">Tow needed</span> : null}
               </div>
@@ -86,6 +90,8 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <div><strong>Mileage</strong><span>{selected.mileage || '-'}</span></div>
               <div><strong>Damage</strong><span>{selected.damageArea} · {selected.damageType}</span></div>
               <div><strong>Submitted</strong><span>{fmt(selected.createdAt)}</span></div>
+              <div><strong>Submission State</strong><span>{statusLabel(selected.submissionState || 'legacy')}</span></div>
+              <div><strong>Pushover</strong><span>{statusLabel(selected.notificationStatus || 'legacy')} · {selected.notificationAttempts || 0} attempt(s)</span></div>
               <div><strong>Rental Help</strong><span>{selected.rentalVehicleInterest ? 'Requested' : 'Not requested'}</span></div>
               <div><strong>Tow Assistance</strong><span>{selected.towAssistanceInterest ? 'Needs a tow' : 'Not requested'}</span></div>
             </div>
@@ -102,7 +108,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <button className="ghost-btn" onClick={saveNote}>Add Note</button>
               <button className="primary-btn" onClick={convert}>Convert to Appointment</button>
               <button className="ghost-btn" onClick={() => archiveLead({ id: selected._id })}>Archive</button>
-              <button className="delete-btn" onClick={() => deleteLead({ id: selected._id }).then(() => setSelected(null))}>Delete</button>
+              <button className="delete-btn" onClick={() => deleteLead({ id: selected._id }).then(() => setSelected(null))}>Move to Recovery</button>
             </div>
           </div>
         </div>

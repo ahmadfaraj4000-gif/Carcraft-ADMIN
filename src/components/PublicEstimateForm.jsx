@@ -1,5 +1,5 @@
-import { useState } from 'react'
-import { useAction, useMutation } from 'convex/react'
+import { useRef, useState } from 'react'
+import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
 const initial = {
@@ -21,26 +21,32 @@ const initial = {
 }
 
 export default function PublicEstimateForm() {
-  const createLead = useAction(api.estimateLeads.createWithNotification)
-  const getUploadUrl = useMutation(api.estimateLeads.generateUploadUrl)
+  const startSubmission = useMutation(api.estimateLeads.startSubmission)
+  const getUploadUrl = useMutation(api.estimateLeads.generateSubmissionUploadUrl)
+  const attachPhoto = useMutation(api.estimateLeads.attachSubmissionPhoto)
+  const finalizeSubmission = useMutation(api.estimateLeads.finalizeSubmission)
   const [form, setForm] = useState(initial)
   const [files, setFiles] = useState([])
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState('')
+  const submission = useRef(null)
+  const uploadedFiles = useRef(new Map())
 
   function update(key, value) {
     setForm((current) => ({ ...current, [key]: value }))
   }
 
   async function uploadPhotos() {
-    const photos = []
     for (const [index, file] of files.entries()) {
-      const url = await getUploadUrl()
+      const fileKey = `${index}:${file.name}:${file.size}:${file.lastModified}`
+      if (uploadedFiles.current.has(fileKey)) continue
+      const url = await getUploadUrl(submission.current)
       const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': file.type }, body: file })
+      if (!res.ok) throw new Error('Photo upload failed. Please try again.')
       const { storageId } = await res.json()
-      photos.push({ storageId, name: file.name, order: index })
+      await attachPhoto({ ...submission.current, photo: { storageId, name: file.name, order: index } })
+      uploadedFiles.current.set(fileKey, storageId)
     }
-    return photos
   }
 
   async function submit(event) {
@@ -48,13 +54,22 @@ export default function PublicEstimateForm() {
     setStatus('saving')
     setError('')
     try {
-      const photos = await uploadPhotos()
-      await createLead({ ...form, photos })
+      if (!submission.current) {
+        const submissionKey = crypto.randomUUID()
+        const saved = await startSubmission({ ...form, submissionKey })
+        submission.current = { leadId: saved.leadId, submissionKey }
+      }
+      await uploadPhotos()
+      await finalizeSubmission(submission.current)
       setForm(initial)
       setFiles([])
+      submission.current = null
+      uploadedFiles.current.clear()
       setStatus('success')
     } catch (err) {
-      setError(err.message || 'Unable to submit your estimate request.')
+      setError(submission.current
+        ? `Your contact and vehicle details were safely saved. ${err.message || 'Photo processing is incomplete.'} Please submit again to retry.`
+        : (err.message || 'Unable to submit your estimate request.'))
       setStatus('idle')
     }
   }

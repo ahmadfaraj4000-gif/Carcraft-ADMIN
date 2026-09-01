@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
@@ -22,6 +22,8 @@ export default function EstimateLeads({ leads = [], search = '' }) {
   const [note, setNote] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [time, setTime] = useState('09:00')
+  const [lightbox, setLightbox] = useState(null)
+  const lightboxCloseRef = useRef(null)
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
@@ -30,6 +32,52 @@ export default function EstimateLeads({ leads = [], search = '' }) {
       lead.name, lead.phone, lead.email, lead.vehicle, lead.status, lead.damageArea, lead.damageType
     ].filter(Boolean).join(' ').toLowerCase().includes(term))
   }, [leads, search])
+
+  useEffect(() => {
+    if (!lightbox) return undefined
+    const previouslyFocused = document.activeElement
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    lightboxCloseRef.current?.focus()
+
+    function handleKeyDown(event) {
+      if (event.key === 'Escape') {
+        setLightbox(null)
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        setLightbox((current) => current ? {
+          ...current,
+          index: (current.index - 1 + current.photos.length) % current.photos.length
+        } : null)
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        setLightbox((current) => current ? {
+          ...current,
+          index: (current.index + 1) % current.photos.length
+        } : null)
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      document.body.style.overflow = previousOverflow
+      previouslyFocused?.focus?.()
+    }
+  }, [Boolean(lightbox)])
+
+  function openLightbox(lead, index) {
+    const photos = lead.photos || []
+    if (!photos.length) return
+    setLightbox({ photos, index, leadName: lead.name })
+  }
+
+  function moveLightbox(direction) {
+    setLightbox((current) => current ? {
+      ...current,
+      index: (current.index + direction + current.photos.length) % current.photos.length
+    } : null)
+  }
 
   async function saveNote() {
     if (!note.trim() || !selected) return
@@ -61,7 +109,17 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <p className="muted">{lead.phone} · {lead.email} · {lead.vehicle || 'Vehicle not listed'}</p>
               <p>{lead.damageArea} · {lead.damageType} · Severity: {lead.severity}</p>
               <div className="photo-row">
-                {(lead.photos || []).slice(0, 4).map((photo) => <img key={photo.storageId} src={photo.url} alt={photo.name || 'Vehicle damage'} />)}
+                {(lead.photos || []).slice(0, 4).map((photo, index) => (
+                  <button
+                    className="photo-thumbnail-button"
+                    type="button"
+                    key={photo.storageId || photo.url || index}
+                    onClick={() => openLightbox(lead, index)}
+                    aria-label={`Open damage photo ${index + 1} of ${lead.photos.length} for ${lead.name}`}
+                  >
+                    <img src={photo.url} alt={photo.name || `Vehicle damage photo ${index + 1}`} />
+                  </button>
+                ))}
               </div>
             </div>
             <div className="quick-actions">
@@ -96,7 +154,17 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <div><strong>Tow Assistance</strong><span>{selected.towAssistanceInterest ? 'Needs a tow' : 'Not requested'}</span></div>
             </div>
             <p className="note-box">{selected.description}</p>
-            <div className="photo-grid">{(selected.photos || []).map((photo) => <img key={photo.storageId} src={photo.url} alt={photo.name || 'Damage photo'} />)}</div>
+            <div className="photo-grid">{(selected.photos || []).map((photo, index) => (
+              <button
+                className="photo-grid-button"
+                type="button"
+                key={photo.storageId || photo.url || index}
+                onClick={() => openLightbox(selected, index)}
+                aria-label={`Open damage photo ${index + 1} of ${selected.photos.length} for ${selected.name}`}
+              >
+                <img src={photo.url} alt={photo.name || `Damage photo ${index + 1}`} />
+              </button>
+            ))}</div>
             <div className="form-grid">
               <label>Status<select value={selected.status} onChange={(e) => updateStatus({ id: selected._id, status: e.target.value })}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
               <label>Appointment Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
@@ -111,6 +179,41 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <button className="delete-btn" onClick={() => deleteLead({ id: selected._id }).then(() => setSelected(null))}>Move to Recovery</button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {lightbox ? (
+        <div
+          className="photo-lightbox-backdrop"
+          role="presentation"
+          onMouseDown={(event) => { if (event.target === event.currentTarget) setLightbox(null) }}
+        >
+          <section
+            className="photo-lightbox"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Damage photos for ${lightbox.leadName}`}
+          >
+            <div className="photo-lightbox-toolbar">
+              <span aria-live="polite">Photo {lightbox.index + 1} of {lightbox.photos.length}</span>
+              <button ref={lightboxCloseRef} type="button" onClick={() => setLightbox(null)} aria-label="Close damage photo viewer">Close</button>
+            </div>
+            <div className="photo-lightbox-stage">
+              {lightbox.photos.length > 1 ? (
+                <button className="photo-lightbox-arrow previous" type="button" onClick={() => moveLightbox(-1)} aria-label="Previous damage photo">‹</button>
+              ) : null}
+              <figure>
+                <img
+                  src={lightbox.photos[lightbox.index].url}
+                  alt={lightbox.photos[lightbox.index].name || `Damage photo ${lightbox.index + 1}`}
+                />
+                {lightbox.photos[lightbox.index].name ? <figcaption>{lightbox.photos[lightbox.index].name}</figcaption> : null}
+              </figure>
+              {lightbox.photos.length > 1 ? (
+                <button className="photo-lightbox-arrow next" type="button" onClick={() => moveLightbox(1)} aria-label="Next damage photo">›</button>
+              ) : null}
+            </div>
+          </section>
         </div>
       ) : null}
     </section>

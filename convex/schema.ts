@@ -230,6 +230,7 @@ export default defineSchema({
     locationVerified: v.optional(v.boolean()),
     locationDistanceMeters: v.optional(v.number()),
     locationAccuracyMeters: v.optional(v.number()),
+    locationCapturedAt: v.optional(v.number()),
     createdAt: v.number()
   })
     .index('by_employee_time', ['employeeId', 'occurredAt'])

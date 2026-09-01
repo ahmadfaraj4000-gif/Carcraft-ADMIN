@@ -254,14 +254,12 @@ export default function Payroll() {
   const [correctionReason, setCorrectionReason] = useState('')
   const [savingCorrection, setSavingCorrection] = useState(false)
   const [downloadingSchedule, setDownloadingSchedule] = useState(false)
-  const [geofenceEnabled, setGeofenceEnabled] = useState(false)
   const [geofenceAddress, setGeofenceAddress] = useState('8 South St, West Hartford, CT 06110')
   const [geofenceLatitude, setGeofenceLatitude] = useState(null)
   const [geofenceLongitude, setGeofenceLongitude] = useState(null)
   const [geofenceRadiusFeet, setGeofenceRadiusFeet] = useState(350)
   const [geofenceMaxAccuracyFeet, setGeofenceMaxAccuracyFeet] = useState(200)
   const [geofencePointAccuracyFeet, setGeofencePointAccuracyFeet] = useState(null)
-  const [geofenceRequiredActions, setGeofenceRequiredActions] = useState(['clock_in'])
   const [capturingShopLocation, setCapturingShopLocation] = useState(false)
   const [savingGeofence, setSavingGeofence] = useState(false)
 
@@ -295,14 +293,12 @@ export default function Payroll() {
 
   useEffect(() => {
     if (!dashboard?.settings) return
-    setGeofenceEnabled(dashboard.settings.geofenceEnabled)
     setGeofenceAddress(dashboard.settings.geofenceAddress)
     setGeofenceLatitude(dashboard.settings.geofenceLatitude ?? null)
     setGeofenceLongitude(dashboard.settings.geofenceLongitude ?? null)
     setGeofenceRadiusFeet(dashboard.settings.geofenceRadiusFeet)
     setGeofenceMaxAccuracyFeet(dashboard.settings.geofenceMaxAccuracyFeet)
     setGeofencePointAccuracyFeet(dashboard.settings.geofencePointAccuracyFeet)
-    setGeofenceRequiredActions(dashboard.settings.geofenceRequiredActions)
   }, [dashboard?.settings])
 
   useEffect(() => {
@@ -555,14 +551,6 @@ export default function Payroll() {
     }
   }
 
-  function toggleGeofenceActions(actions, enabled) {
-    setGeofenceRequiredActions((current) => {
-      const next = new Set(current)
-      for (const action of actions) enabled ? next.add(action) : next.delete(action)
-      return Array.from(next)
-    })
-  }
-
   async function saveGeofenceSettings(event) {
     event.preventDefault()
     setError('')
@@ -570,18 +558,14 @@ export default function Payroll() {
     setSavingGeofence(true)
     try {
       await updateGeofenceSettings({
-        enabled: geofenceEnabled,
         address: geofenceAddress,
         latitude: geofenceLatitude ?? undefined,
         longitude: geofenceLongitude ?? undefined,
         radiusFeet: Number(geofenceRadiusFeet),
         maxAccuracyFeet: Number(geofenceMaxAccuracyFeet),
-        pointAccuracyFeet: geofencePointAccuracyFeet ?? undefined,
-        requiredActions: geofenceRequiredActions
+        pointAccuracyFeet: geofencePointAccuracyFeet ?? undefined
       })
-      setNotice(geofenceEnabled
-        ? `Location verification is enabled within ${geofenceRadiusFeet} feet of Car Craft.`
-        : 'Location verification is disabled.')
+      setNotice(`Location verification is required within ${geofenceRadiusFeet} feet of Car Craft for every employee clock action.`)
     } catch (requestError) {
       setError(requestError?.data || requestError?.message || 'Location settings could not be saved.')
     } finally {
@@ -795,16 +779,11 @@ export default function Payroll() {
               <div>
                 <p className="eyebrow">Location verification</p>
                 <h3>Require employees to be on site</h3>
-                <p>The phone’s location is checked by the server before protected actions are recorded. Exact employee coordinates are not saved.</p>
+                <p>The phone’s location is checked by the server before every employee action is recorded. Exact employee coordinates are not saved.</p>
               </div>
-              <span className={`integration-badge ${geofenceEnabled ? 'integration-badge-live' : ''}`}>{geofenceEnabled ? 'Enabled' : 'Disabled'}</span>
+              <span className="integration-badge integration-badge-live">Required</span>
             </div>
             <form className="geofence-policy-form" onSubmit={saveGeofenceSettings}>
-              <label className="lunch-toggle">
-                <input type="checkbox" checked={geofenceEnabled} onChange={(event) => setGeofenceEnabled(event.target.checked)} />
-                <span>Enable on-site location verification</span>
-              </label>
-
               <div className="geofence-config-grid">
                 <div className="geofence-location-panel">
                   <label>Shop address<input value={geofenceAddress} maxLength="160" onChange={(event) => setGeofenceAddress(event.target.value)} /></label>
@@ -822,17 +801,15 @@ export default function Payroll() {
                     <label>Allowed radius<input type="number" min="100" max="1000" step="25" value={geofenceRadiusFeet} onChange={(event) => setGeofenceRadiusFeet(event.target.value)} /><span>feet from the saved shop point</span></label>
                     <label>Maximum GPS uncertainty<input type="number" min="50" max="500" step="25" value={geofenceMaxAccuracyFeet} onChange={(event) => setGeofenceMaxAccuracyFeet(event.target.value)} /><span>reject less-accurate readings</span></label>
                   </div>
-                  <fieldset className="geofence-actions">
-                    <legend>Require location for</legend>
-                    <label><input type="checkbox" checked={geofenceRequiredActions.includes('clock_in')} onChange={(event) => toggleGeofenceActions(['clock_in'], event.target.checked)} /> Clock In</label>
-                    <label><input type="checkbox" checked={geofenceRequiredActions.includes('lunch_start') && geofenceRequiredActions.includes('lunch_end')} onChange={(event) => toggleGeofenceActions(['lunch_start', 'lunch_end'], event.target.checked)} /> Lunch actions</label>
-                    <label><input type="checkbox" checked={geofenceRequiredActions.includes('clock_out')} onChange={(event) => toggleGeofenceActions(['clock_out'], event.target.checked)} /> Clock Out</label>
-                  </fieldset>
+                  <div className="shop-point-status ready">
+                    <strong>Required for every employee action</strong>
+                    <span>Clock In, Start Lunch, End Lunch, and Clock Out all require a fresh on-site location.</span>
+                  </div>
                 </div>
               </div>
 
-              <p className="control-note geofence-privacy-note">Recommended: Clock In only, 350-foot radius, and 200-foot maximum uncertainty. Employees must grant browser location permission when prompted.</p>
-              <button className="primary-btn" type="submit" disabled={savingGeofence || (geofenceEnabled && (geofenceLatitude === null || geofenceLongitude === null || geofenceRequiredActions.length === 0))}>{savingGeofence ? 'Saving…' : 'Save Location Policy'}</button>
+              <p className="control-note geofence-privacy-note">Employees must grant browser location permission for each action. Readings that are stale, inaccurate, or not clearly inside the allowed radius are rejected.</p>
+              <button className="primary-btn" type="submit" disabled={savingGeofence || geofenceLatitude === null || geofenceLongitude === null}>{savingGeofence ? 'Saving…' : 'Save Location Policy'}</button>
             </form>
           </article>
         </div>

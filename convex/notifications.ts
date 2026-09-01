@@ -132,12 +132,12 @@ export const sendMissingClockOutReminder = internalAction({
   },
   handler: async (_ctx, args) => {
     if (!args.employeeNames.length) return { sent: false, reason: 'no_employees' as const }
-    const names = args.employeeNames.join(', ')
+    const names = args.employeeNames.map((name) => `• ${name}`).join('\n')
     const message = args.employeeNames.length === 1
-      ? `${names} clocked in today and has not clocked out as of 5:00 PM ET.`
-      : `${args.employeeNames.length} employees clocked in today and have not clocked out as of 5:00 PM ET: ${names}.`
+      ? `This employee clocked in today and has not clocked out as of 4:45 PM ET:\n${names}`
+      : `${args.employeeNames.length} employees clocked in today and have not clocked out as of 4:45 PM ET:\n${names}`
     return sendPushover({
-      title: '5:00 PM Clock-Out Reminder',
+      title: '4:45 PM Clock-Out Reminder',
       message,
       context: `missing clock-outs at ${easternTime(args.checkedAt)}`,
       timestamp: args.checkedAt,

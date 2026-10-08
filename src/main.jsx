@@ -4,9 +4,15 @@ import { ConvexReactClient } from 'convex/react'
 import { ConvexAuthProvider } from '@convex-dev/auth/react'
 import App from './App'
 import './styles.css'
+import './secureTransport.js'
 
 const convexUrl = import.meta.env.VITE_CONVEX_URL || 'https://configure-convex-url.convex.cloud'
-const convex = new ConvexReactClient(convexUrl)
+let transportError = ''
+try {
+  globalThis.CarCraftTransport.requireSecurePage()
+  globalThis.CarCraftTransport.requireHttpsUrl(convexUrl)
+} catch (error) { transportError = error.message }
+const convex = transportError ? null : new ConvexReactClient(convexUrl)
 
 function Router() {
   if (!import.meta.env.VITE_CONVEX_URL) {
@@ -26,8 +32,8 @@ function Router() {
 
 createRoot(document.getElementById('root')).render(
   <React.StrictMode>
-    <ConvexAuthProvider client={convex}>
+    {transportError ? <main className="loading-screen" role="alert">{transportError}</main> : <ConvexAuthProvider client={convex}>
       <Router />
-    </ConvexAuthProvider>
+    </ConvexAuthProvider>}
   </React.StrictMode>
 )

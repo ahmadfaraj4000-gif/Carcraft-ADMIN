@@ -1,3 +1,4 @@
+import './secureTransport.js'
 // Shared by the public funnel and the React form. Originals are never altered.
 ;(function (root) {
   async function makeThumbnail(file) {
@@ -40,15 +41,16 @@
   async function uploadPhoto({ file, order, getUploadUrl, attachPhoto, state }) {
     // Persist IDs before attaching so a retry cannot upload the original twice.
     async function upload(blob) {
-      const url = await getUploadUrl()
+      const url = root.CarCraftTransport.requireHttpsUrl(await getUploadUrl())
       const response = await fetch(url, {
-        method: 'POST', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob
+        method: 'POST', redirect: 'error', headers: { 'Content-Type': blob.type || 'application/octet-stream' }, body: blob
       })
       if (!response.ok) throw new Error('Photo upload failed. Please try again.')
       const { storageId } = await response.json()
       if (!storageId) throw new Error('Photo upload was not confirmed. Please try again.')
       return storageId
     }
+    root.CarCraftTransport.requireSecurePage()
     if (state.attached) return
     if (!state.storageId) state.storageId = await upload(file)
     if (!state.thumbnailAttempted) {

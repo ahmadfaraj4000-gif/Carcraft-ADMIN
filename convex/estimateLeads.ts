@@ -5,6 +5,7 @@ import { getAdminUserId, requireAdmin } from './lib/requireAdmin'
 
 const photoArg = v.object({
   storageId: v.id('_storage'),
+  thumbnailStorageId: v.optional(v.id('_storage')),
   name: v.optional(v.string()),
   order: v.optional(v.number())
 })
@@ -123,7 +124,8 @@ async function withUrls(ctx: any, row: any) {
     ...row,
     photos: await Promise.all((row.photos || []).map(async (photo: any) => ({
       ...photo,
-      url: await ctx.storage.getUrl(photo.storageId)
+      url: await ctx.storage.getUrl(photo.storageId),
+      thumbnailUrl: await ctx.storage.getUrl(photo.thumbnailStorageId || photo.storageId)
     })))
   }
 }
@@ -236,6 +238,52 @@ export const list = query({
     if (!await getAdminUserId(ctx)) return []
     const rows = await ctx.db.query('estimateLeads').order('desc').collect()
     return Promise.all(rows.map((row) => withUrls(ctx, row)))
+  }
+})
+
+// Lists never resolve storage URLs or send private submission keys to the UI.
+export const listSummaries = query({
+  args: { archived: v.optional(v.boolean()) },
+  handler: async (ctx, args) => {
+    if (!await getAdminUserId(ctx)) return []
+    const rows = await ctx.db.query('estimateLeads')
+      .withIndex('by_archived', (q) => q.eq('archived', args.archived ?? false))
+      .order('desc').collect()
+    return rows.filter((row) => args.archived || !row.deletedAt).map((row) => {
+      const { photos, notes, submissionKey, ...summary } = row
+      return { ...summary, photoCount: photos.length }
+    })
+  }
+})
+
+export const getPhotos = query({
+  args: { id: v.id('estimateLeads') },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx)
+    const lead = await ctx.db.get(args.id)
+    if (!lead || lead.deletedAt) return []
+    return (await withUrls(ctx, lead)).photos
+  }
+})
+
+export const getDetails = query({
+  args: { id: v.id('estimateLeads') },
+  handler: async (ctx, args) => {
+    await requireAdmin(ctx)
+    const lead = await ctx.db.get(args.id)
+    if (!lead || lead.deletedAt) return null
+    const { submissionKey, ...details } = await withUrls(ctx, lead)
+    return details
+  }
+})
+
+export const restoreLead = mutation({
+  args: { id: v.id('estimateLeads') },
+  handler: async (ctx, { id }) => {
+    await requireAdmin(ctx)
+    const now = Date.now()
+    await ctx.db.patch(id, { status: 'new', archived: false, deletedAt: undefined, updatedAt: now })
+    await ctx.db.insert('estimateLeadEvents', { leadId: id, eventType: 'restored', createdAt: now })
   }
 })
 

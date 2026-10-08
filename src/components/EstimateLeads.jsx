@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation } from 'convex/react'
+import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
 const statuses = ['new', 'contacted', 'booked', 'follow_up_needed', 'lost', 'archived']
@@ -12,13 +12,57 @@ function statusLabel(value) {
   return String(value || 'new').replaceAll('_', ' ')
 }
 
+// An unopened archive never mounts this component, so it cannot fetch photos.
+function LeadPhotos({ lead, priority, onOpen }) {
+  const container = useRef(null)
+  const [visible, setVisible] = useState(priority)
+  const photos = useQuery(api.estimateLeads.getPhotos, visible ? { id: lead._id } : 'skip')
+  useEffect(() => {
+    if (priority) { setVisible(true); return }
+    if (visible || !container.current) return
+    if (!('IntersectionObserver' in window)) { setVisible(true); return }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.disconnect() }
+    }, { rootMargin: '100px 0px' })
+    observer.observe(container.current)
+    return () => observer.disconnect()
+  }, [priority, visible])
+  if (!lead.photoCount) return null
+  return <div className="photo-row lead-photo-row" ref={container}>
+    {photos ? photos.slice(0, 4).map((photo, index) => (
+      <button className="photo-thumbnail-button" type="button" key={photo.storageId}
+        onClick={() => onOpen({ ...lead, photos }, index)}
+        aria-label={`Open damage photo ${index + 1} of ${photos.length} for ${lead.name}`}>
+        <img src={photo.thumbnailUrl || photo.url} width="82" height="62" decoding="async"
+          loading="eager" fetchpriority={priority ? 'high' : 'low'}
+          onError={(event) => { if (event.currentTarget.src !== photo.url) event.currentTarget.src = photo.url }}
+          alt={photo.name || `Vehicle damage photo ${index + 1}`} />
+      </button>
+    )) : <span className="photo-placeholder">{lead.photoCount} photo{lead.photoCount === 1 ? '' : 's'} · {visible ? 'Loading…' : 'Loads as you scroll'}</span>}
+  </div>
+}
+
 export default function EstimateLeads({ leads = [], search = '' }) {
   const updateStatus = useMutation(api.estimateLeads.updateStatus)
   const addNote = useMutation(api.estimateLeads.addNote)
   const archiveLead = useMutation(api.estimateLeads.archiveLead)
   const deleteLead = useMutation(api.estimateLeads.deleteLead)
   const convertLead = useMutation(api.appointments.convertLead)
-  const [selected, setSelected] = useState(null)
+  const restoreLead = useMutation(api.estimateLeads.restoreLead)
+  const [view, setView] = useState('active')
+  const archivedLeads = useQuery(api.estimateLeads.listSummaries, view === 'archived' ? { archived: true } : 'skip')
+  const [selectedId, setSelected] = useState(null)
+  const selected = useQuery(api.estimateLeads.getDetails, selectedId ? { id: selectedId } : 'skip')
+  const [actionError, setActionError] = useState('')
+  const [busyId, setBusyId] = useState(null)
+
+  async function runAction(id, operation, close = false) {
+    setActionError('')
+    setBusyId(id)
+    try { await operation(); if (close) setSelected(null) }
+    catch (error) { setActionError(error.message || 'Unable to update this lead. Please try again.') }
+    finally { setBusyId(null) }
+  }
   const [note, setNote] = useState('')
   const [date, setDate] = useState(new Date().toISOString().slice(0, 10))
   const [time, setTime] = useState('09:00')
@@ -27,11 +71,12 @@ export default function EstimateLeads({ leads = [], search = '' }) {
 
   const rows = useMemo(() => {
     const term = search.trim().toLowerCase()
-    if (!term) return leads
-    return leads.filter((lead) => [
+    const source = view === 'archived' ? (archivedLeads || []) : leads
+    if (!term) return source
+    return source.filter((lead) => [
       lead.name, lead.phone, lead.email, lead.vehicle, lead.status, lead.damageArea, lead.damageType
     ].filter(Boolean).join(' ').toLowerCase().includes(term))
-  }, [leads, search])
+  }, [leads, archivedLeads, view, search])
 
   useEffect(() => {
     if (!lightbox) return undefined
@@ -92,13 +137,19 @@ export default function EstimateLeads({ leads = [], search = '' }) {
 
   return (
     <section className="module">
+      <div className="lead-tabs" role="tablist" aria-label="Estimate lead views">
+        <button role="tab" aria-selected={view === 'active'} className={view === 'active' ? 'primary-btn' : 'ghost-btn'} onClick={() => setView('active')}>Active Leads</button>
+        <button role="tab" aria-selected={view === 'archived'} className={view === 'archived' ? 'primary-btn' : 'ghost-btn'} onClick={() => setView('archived')}>Archive</button>
+      </div>
+      {actionError ? <div className="error-box" role="alert">{actionError}</div> : null}
+      {view === 'archived' ? <p className="muted">Archived photos load only when you open an estimate.</p> : null}
       <div className="command-list">
-        {rows.map((lead) => (
+        {rows.map((lead, leadIndex) => (
           <article className={`command-card status-border-${lead.status}`} key={lead._id}>
             <div>
               <div className="command-topline">
                 <h3>{lead.name}</h3>
-                <span className={`status-pill status-${lead.status}`}>{statusLabel(lead.status)}</span>
+                <span className={`status-pill status-${lead.status}`}>{lead.deletedAt ? 'In recovery' : statusLabel(lead.status)}</span>
                 {lead.submissionState === 'pending_upload' ? <span className="status-pill status-follow_up_needed">Saved · photos pending</span> : null}
                 {lead.notificationStatus === 'sent' ? <span className="status-pill status-booked">Pushover sent</span> : null}
                 {lead.notificationStatus === 'pending' ? <span className="status-pill status-follow_up_needed">Pushover pending</span> : null}
@@ -108,30 +159,22 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               </div>
               <p className="muted">{lead.phone} · {lead.email} · {lead.vehicle || 'Vehicle not listed'}</p>
               <p>{lead.damageArea} · {lead.damageType} · Severity: {lead.severity}</p>
-              <div className="photo-row">
-                {(lead.photos || []).slice(0, 4).map((photo, index) => (
-                  <button
-                    className="photo-thumbnail-button"
-                    type="button"
-                    key={photo.storageId || photo.url || index}
-                    onClick={() => openLightbox(lead, index)}
-                    aria-label={`Open damage photo ${index + 1} of ${lead.photos.length} for ${lead.name}`}
-                  >
-                    <img src={photo.url} alt={photo.name || `Vehicle damage photo ${index + 1}`} />
-                  </button>
-                ))}
-              </div>
+              {view === 'active' ? <LeadPhotos lead={lead} priority={leadIndex < 4} onOpen={openLightbox} /> : <p className="muted">{lead.photoCount} photos · Open to view</p>}
             </div>
             <div className="quick-actions">
-              <button className="ghost-btn small" onClick={() => setSelected(lead)}>Open</button>
-              <button className="ghost-btn small" onClick={() => updateStatus({ id: lead._id, status: 'contacted' })}>Contacted</button>
-              <button className="primary-btn small" onClick={() => updateStatus({ id: lead._id, status: 'booked' })}>Booked</button>
+              <button className="ghost-btn small" disabled={Boolean(lead.deletedAt)} onClick={() => setSelected(lead._id)}>Open</button>
+              {view === 'active' ? <>
+                <button className="ghost-btn small" disabled={busyId === lead._id} onClick={() => runAction(lead._id, () => updateStatus({ id: lead._id, status: 'contacted' }))}>Contacted</button>
+                <button className="primary-btn small" disabled={busyId === lead._id} onClick={() => runAction(lead._id, () => updateStatus({ id: lead._id, status: 'booked' }))}>Booked</button>
+                <button className="ghost-btn small" disabled={busyId === lead._id} onClick={() => runAction(lead._id, () => archiveLead({ id: lead._id }))}>Archive</button>
+              </> : <button className="ghost-btn small" disabled={busyId === lead._id} onClick={() => runAction(lead._id, () => restoreLead({ id: lead._id }))}>Restore</button>}
             </div>
           </article>
         ))}
-        {!rows.length ? <div className="empty-command-card">No estimate leads found.</div> : null}
+        {!rows.length ? <div className="empty-command-card">{view === 'archived' && archivedLeads === undefined ? 'Loading archive…' : 'No estimate leads found.'}</div> : null}
       </div>
 
+      {selectedId && selected === undefined ? <div className="modal-backdrop"><div className="modal-card" role="status">Loading estimate… <button className="ghost-btn" onClick={() => setSelected(null)}>Close</button></div></div> : null}
       {selected ? (
         <div className="modal-backdrop" onClick={() => setSelected(null)}>
           <div className="modal-card wide" onClick={(event) => event.stopPropagation()}>
@@ -139,6 +182,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <div><p className="eyebrow">Estimate Lead</p><h2>{selected.name}</h2></div>
               <button className="ghost-btn" onClick={() => setSelected(null)}>Close</button>
             </div>
+            {actionError ? <div className="error-box" role="alert">{actionError}</div> : null}
             <div className="detail-grid">
               <div><strong>Phone</strong><span>{selected.phone}</span></div>
               <div><strong>Email</strong><span>{selected.email}</span></div>
@@ -162,21 +206,21 @@ export default function EstimateLeads({ leads = [], search = '' }) {
                 onClick={() => openLightbox(selected, index)}
                 aria-label={`Open damage photo ${index + 1} of ${selected.photos.length} for ${selected.name}`}
               >
-                <img src={photo.url} alt={photo.name || `Damage photo ${index + 1}`} />
+                <img src={photo.thumbnailUrl || photo.url} loading="lazy" decoding="async" alt={photo.name || `Damage photo ${index + 1}`} />
               </button>
             ))}</div>
             <div className="form-grid">
-              <label>Status<select value={selected.status} onChange={(e) => updateStatus({ id: selected._id, status: e.target.value })}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+              <label>Status<select value={selected.status} onChange={(e) => runAction(selected._id, () => updateStatus({ id: selected._id, status: e.target.value }))}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
               <label>Appointment Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
               <label>Appointment Time<input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></label>
             </div>
             <div className="notes-list">{(selected.notes || []).map((item) => <p key={item.createdAt}>{item.body}</p>)}</div>
             <textarea value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add admin note..." />
             <div className="modal-actions">
-              <button className="ghost-btn" onClick={saveNote}>Add Note</button>
-              <button className="primary-btn" onClick={convert}>Convert to Appointment</button>
-              <button className="ghost-btn" onClick={() => archiveLead({ id: selected._id })}>Archive</button>
-              <button className="delete-btn" onClick={() => deleteLead({ id: selected._id }).then(() => setSelected(null))}>Move to Recovery</button>
+              <button className="ghost-btn" disabled={busyId === selected._id} onClick={() => runAction(selected._id, saveNote)}>Add Note</button>
+              <button className="primary-btn" disabled={busyId === selected._id} onClick={() => runAction(selected._id, convert)}>Convert to Appointment</button>
+              <button className="ghost-btn" disabled={busyId === selected._id} onClick={() => runAction(selected._id, () => selected.archived ? restoreLead({ id: selected._id }) : archiveLead({ id: selected._id }), true)}>{selected.archived ? 'Restore' : 'Archive'}</button>
+              <button className="delete-btn" disabled={busyId === selected._id} onClick={() => runAction(selected._id, () => deleteLead({ id: selected._id }), true)}>Move to Recovery</button>
             </div>
           </div>
         </div>

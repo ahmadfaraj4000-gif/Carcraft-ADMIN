@@ -13,8 +13,10 @@ import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
 import type * as customers from "../customers.js";
 import type * as estimateLeads from "../estimateLeads.js";
+import type * as estimatePhotoMaintenance from "../estimatePhotoMaintenance.js";
 import type * as http from "../http.js";
 import type * as inventory from "../inventory.js";
+import type * as lib_requireAdmin from "../lib/requireAdmin.js";
 import type * as notifications from "../notifications.js";
 import type * as timeClock from "../timeClock.js";
 
@@ -30,8 +32,10 @@ declare const fullApi: ApiFromModules<{
   crons: typeof crons;
   customers: typeof customers;
   estimateLeads: typeof estimateLeads;
+  estimatePhotoMaintenance: typeof estimatePhotoMaintenance;
   http: typeof http;
   inventory: typeof inventory;
+  "lib/requireAdmin": typeof lib_requireAdmin;
   notifications: typeof notifications;
   timeClock: typeof timeClock;
 }>;

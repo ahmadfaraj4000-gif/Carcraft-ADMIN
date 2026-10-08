@@ -1,4 +1,5 @@
-import { useRef, useState } from 'react'
+import '../estimatePhotos.js'
+import { useEffect, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 
@@ -29,6 +30,12 @@ export default function PublicEstimateForm() {
   const [files, setFiles] = useState([])
   const [status, setStatus] = useState('idle')
   const [error, setError] = useState('')
+  const [previews, setPreviews] = useState([])
+  useEffect(() => {
+    const urls = files.map((file) => ({ name: file.name, url: URL.createObjectURL(file) }))
+    setPreviews(urls)
+    return () => urls.forEach(({ url }) => URL.revokeObjectURL(url))
+  }, [files])
   const submission = useRef(null)
   const uploadedFiles = useRef(new Map())
 
@@ -39,18 +46,19 @@ export default function PublicEstimateForm() {
   async function uploadPhotos() {
     for (const [index, file] of files.entries()) {
       const fileKey = `${index}:${file.name}:${file.size}:${file.lastModified}`
-      if (uploadedFiles.current.has(fileKey)) continue
-      const url = await getUploadUrl(submission.current)
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': file.type }, body: file })
-      if (!res.ok) throw new Error('Photo upload failed. Please try again.')
-      const { storageId } = await res.json()
-      await attachPhoto({ ...submission.current, photo: { storageId, name: file.name, order: index } })
-      uploadedFiles.current.set(fileKey, storageId)
+      const state = uploadedFiles.current.get(fileKey) || {}
+      uploadedFiles.current.set(fileKey, state)
+      await globalThis.CarCraftPhotos.uploadPhoto({
+        file, order: index, state,
+        getUploadUrl: () => getUploadUrl(submission.current),
+        attachPhoto: (photo) => attachPhoto({ ...submission.current, photo })
+      })
     }
   }
 
   async function submit(event) {
     event.preventDefault()
+    if (files.length < 1 || files.length > 8) { setError('Please upload between one and eight photos.'); return }
     setStatus('saving')
     setError('')
     try {
@@ -121,7 +129,7 @@ export default function PublicEstimateForm() {
         <div className="form-section">
           <h2>Photos</h2>
           <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} required />
-          <div className="photo-row">{files.map((file) => <img key={file.name} src={URL.createObjectURL(file)} alt={file.name} />)}</div>
+          <div className="photo-row">{previews.map((photo) => <img key={photo.url} src={photo.url} alt={photo.name} />)}</div>
         </div>
 
         <div className="form-section">

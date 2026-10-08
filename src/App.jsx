@@ -95,7 +95,7 @@ export default function App() {
   const searchableTabs = ['leads', 'appointments', 'customers', 'inventory']
 
   const authenticatedArgs = isAuthenticated ? {} : 'skip'
-  const leads = useQuery(api.estimateLeads.list, authenticatedArgs) || []
+  const leads = useQuery(api.estimateLeads.listSummaries, authenticatedArgs) || []
   const appointments = useQuery(api.appointments.list, authenticatedArgs) || []
   const customers = useQuery(api.customers.list, authenticatedArgs) || []
   const inventory = useQuery(api.inventory.list, authenticatedArgs) || []

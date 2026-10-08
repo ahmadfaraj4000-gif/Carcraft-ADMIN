@@ -10,6 +10,7 @@ const note = v.object({
 
 const photoRef = v.object({
   storageId: v.id('_storage'),
+  thumbnailStorageId: v.optional(v.id('_storage')),
   url: v.optional(v.string()),
   name: v.optional(v.string()),
   order: v.optional(v.number())
@@ -76,6 +77,7 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number()
   })
+    .index('by_archived', ['archived'])
     .index('by_status', ['status'])
     .index('by_submission_key', ['submissionKey'])
     .index('by_submission_state', ['submissionState'])

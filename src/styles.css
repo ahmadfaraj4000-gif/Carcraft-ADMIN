@@ -321,6 +321,14 @@ select { appearance: auto; }
 .command-topline h3 { margin: 0; }
 .quick-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .quick-actions select { min-width: 170px; }
+.lead-card-content { flex: 1; min-width: 0; }
+.lead-quote { margin: 14px 0; padding: 12px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-soft); }
+.lead-quote-summary { margin-bottom: 10px; }
+.lead-quote-fields { display: flex; flex-wrap: wrap; align-items: end; gap: 10px; }
+.lead-quote-fields label { flex: 1 1 150px; min-width: 0; }
+.lead-quote-help { margin: 8px 0 0; font-size: 12px; }
+.lead-quote-saved { margin: 8px 0 0; color: var(--success); }
+.lead-quote .error-box { margin: 8px 0 0; }
 .status-new, .status-new_request { background: #fee4e2; color: #b42318; }
 .status-contacted, .status-confirmed { background: #dbeafe; color: var(--info); }
 .status-follow_up_needed, .status-waiting_on_parts, .status-coming_soon { background: #fef3c7; color: var(--warning); }

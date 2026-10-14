@@ -66,3 +66,50 @@ test('invalid submission keys and empty submissions cannot be finalized', async 
   await expect(t.mutation(api.estimateLeads.finalizeSubmission, { leadId, submissionKey: 'different-key-123456' })).rejects.toThrow('not found')
   await expect(t.mutation(api.estimateLeads.finalizeSubmission, { leadId, submissionKey: 'test-validation-123456' })).rejects.toThrow('between one and eight')
 })
+
+test('quotes persist with photos, admin attribution, revisions, and archive/restore', async () => {
+  const { t, admin } = await setup()
+  const submissionKey = 'test-quote-123456789'
+  const { leadId } = await t.mutation(api.estimateLeads.startSubmission, { ...details, submissionKey })
+  const storageId = await t.run((ctx) => ctx.storage.store(new Blob(['damage'], { type: 'image/jpeg' })))
+  await t.mutation(api.estimateLeads.attachSubmissionPhoto, { leadId, submissionKey, photo: { storageId } })
+  const quote = await admin.mutation(api.estimateLeads.saveQuote, { id: leadId, minAmountCents: 150050, maxAmountCents: 200000 })
+  expect(quote).toMatchObject({ minAmountCents: 150050, maxAmountCents: 200000, currency: 'USD', updatedAt: expect.any(Number), updatedBy: expect.any(String) })
+  expect((await admin.query(api.estimateLeads.listSummaries, {}))[0].quote).toEqual(quote)
+  await admin.mutation(api.estimateLeads.archiveLead, { id: leadId })
+  await admin.mutation(api.estimateLeads.saveQuote, { id: leadId, minAmountCents: 175025 })
+  await admin.mutation(api.estimateLeads.restoreLead, { id: leadId })
+  const lead = await admin.query(api.estimateLeads.getDetails, { id: leadId })
+  expect(lead.quote.minAmountCents).toBe(175025)
+  expect(lead.quote.maxAmountCents).toBeUndefined()
+  expect(lead.photos[0].storageId).toBe(storageId)
+  expect(lead.description).toBe(details.description)
+  const revisions = await t.run((ctx) => ctx.db.query('estimateLeadEvents').withIndex('by_lead', (q) => q.eq('leadId', leadId)).collect())
+  expect(revisions.filter((event) => event.eventType === 'quote_saved').map((event) => event.quote.minAmountCents)).toEqual([150050, 175025])
+})
+
+test('only admins can save quotes, and recovery leads must be restored first', async () => {
+  const { t, admin } = await setup()
+  const { leadId } = await t.mutation(api.estimateLeads.startSubmission, { ...details, submissionKey: 'quote-auth-123456789' })
+  const args = { id: leadId, minAmountCents: 10000 }
+  await expect(t.mutation(api.estimateLeads.saveQuote, args)).rejects.toThrow('Admin authentication required')
+  const other = await t.run((ctx) => ctx.db.insert('users', { email: 'customer@example.com' }))
+  await expect(t.withIdentity({ subject: `${other}|session` }).mutation(api.estimateLeads.saveQuote, args)).rejects.toThrow('Admin authentication required')
+  await admin.mutation(api.estimateLeads.deleteLead, { id: leadId })
+  await expect(admin.mutation(api.estimateLeads.saveQuote, args)).rejects.toThrow('Restore it')
+})
+
+test('invalid amounts and reversed ranges cannot overwrite a saved quote', async () => {
+  const { t, admin } = await setup()
+  const { leadId } = await t.mutation(api.estimateLeads.startSubmission, { ...details, submissionKey: 'quote-validation-12345' })
+  await admin.mutation(api.estimateLeads.saveQuote, { id: leadId, minAmountCents: 0 })
+  for (const amounts of [
+    { minAmountCents: -1 }, { minAmountCents: 1.5 }, { minAmountCents: NaN },
+    { minAmountCents: Infinity }, { minAmountCents: Number.MAX_SAFE_INTEGER + 1 },
+    { minAmountCents: 500, maxAmountCents: 499 }, { minAmountCents: 0, maxAmountCents: -1 },
+    { minAmountCents: 0, maxAmountCents: 10.5 }
+  ]) {
+    await expect(admin.mutation(api.estimateLeads.saveQuote, { id: leadId, ...amounts })).rejects.toThrow()
+  }
+  expect((await admin.query(api.estimateLeads.getDetails, { id: leadId })).quote.minAmountCents).toBe(0)
+})

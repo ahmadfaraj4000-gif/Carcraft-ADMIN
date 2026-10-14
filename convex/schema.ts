@@ -8,6 +8,14 @@ const note = v.object({
   createdBy: v.optional(v.id('users'))
 })
 
+const customerQuote = v.object({
+  minAmountCents: v.number(),
+  maxAmountCents: v.optional(v.number()),
+  currency: v.literal('USD'),
+  updatedAt: v.number(),
+  updatedBy: v.id('users')
+})
+
 const photoRef = v.object({
   storageId: v.id('_storage'),
   thumbnailStorageId: v.optional(v.id('_storage')),
@@ -58,6 +66,7 @@ export default defineSchema({
     ),
     photos: v.array(photoRef),
     notes: v.array(note),
+    quote: v.optional(customerQuote),
     archived: v.boolean(),
     submissionKey: v.optional(v.string()),
     submissionState: v.optional(v.union(
@@ -94,9 +103,11 @@ export default defineSchema({
       v.literal('notification_sent'),
       v.literal('notification_failed'),
       v.literal('archived'),
+      v.literal('quote_saved'),
       v.literal('restored')
     ),
     detail: v.optional(v.string()),
+    quote: v.optional(customerQuote),
     createdAt: v.number()
   }).index('by_lead', ['leadId']),
   appointments: defineTable({

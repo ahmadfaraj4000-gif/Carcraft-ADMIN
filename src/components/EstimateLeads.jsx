@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import LeadQuote from './LeadQuote'
 
 const statuses = ['new', 'contacted', 'booked', 'follow_up_needed', 'lost', 'archived']
 
@@ -146,7 +147,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
       <div className="command-list">
         {rows.map((lead, leadIndex) => (
           <article className={`command-card status-border-${lead.status}`} key={lead._id}>
-            <div>
+            <div className="lead-card-content">
               <div className="command-topline">
                 <h3>{lead.name}</h3>
                 <span className={`status-pill status-${lead.status}`}>{lead.deletedAt ? 'In recovery' : statusLabel(lead.status)}</span>
@@ -160,6 +161,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               <p className="muted">{lead.phone} · {lead.email} · {lead.vehicle || 'Vehicle not listed'}</p>
               <p>{lead.damageArea} · {lead.damageType} · Severity: {lead.severity}</p>
               {view === 'active' ? <LeadPhotos lead={lead} priority={leadIndex < 4} onOpen={openLightbox} /> : <p className="muted">{lead.photoCount} photos · Open to view</p>}
+              <LeadQuote lead={lead} />
             </div>
             <div className="quick-actions">
               <button className="ghost-btn small" disabled={Boolean(lead.deletedAt)} onClick={() => setSelected(lead._id)}>Open</button>
@@ -209,6 +211,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
                 <img src={photo.thumbnailUrl || photo.url} loading="lazy" decoding="async" alt={photo.name || `Damage photo ${index + 1}`} />
               </button>
             ))}</div>
+            <LeadQuote key={selected._id} lead={selected} />
             <div className="form-grid">
               <label>Status<select value={selected.status} onChange={(e) => runAction(selected._id, () => updateStatus({ id: selected._id, status: e.target.value }))}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
               <label>Appointment Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>

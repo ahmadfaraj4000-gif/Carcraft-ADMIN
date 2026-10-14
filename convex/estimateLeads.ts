@@ -414,6 +414,33 @@ export const updateStatus = mutation({
   }
 })
 
+export const saveQuote = mutation({
+  args: {
+    id: v.id('estimateLeads'),
+    minAmountCents: v.number(),
+    maxAmountCents: v.optional(v.number())
+  },
+  handler: async (ctx, { id, minAmountCents, maxAmountCents }) => {
+    const updatedBy = await requireAdmin(ctx)
+    const lead = await ctx.db.get(id)
+    if (!lead || lead.deletedAt) throw new Error('Lead not found. Restore it before saving a quote.')
+    for (const amount of [minAmountCents, maxAmountCents]) {
+      if (amount !== undefined && (!Number.isSafeInteger(amount) || amount < 0)) {
+        throw new Error('Quote amounts must be non-negative whole cents.')
+      }
+    }
+    if (maxAmountCents !== undefined && maxAmountCents < minAmountCents) {
+      throw new Error('The upper amount must be at least the quoted amount.')
+    }
+    const now = Date.now()
+    const quote = { minAmountCents, maxAmountCents, currency: 'USD' as const, updatedAt: now, updatedBy }
+    await ctx.db.patch(id, { quote, updatedAt: now })
+    // Preserve revisions with the lead's original photos and repair details for future analysis.
+    await ctx.db.insert('estimateLeadEvents', { leadId: id, eventType: 'quote_saved', quote, createdAt: now })
+    return quote
+  }
+})
+
 export const addNote = mutation({
   args: { id: v.id('estimateLeads'), body: v.string() },
   handler: async (ctx, { id, body }) => {

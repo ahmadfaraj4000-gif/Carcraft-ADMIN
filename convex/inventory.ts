@@ -87,3 +87,47 @@ export const archive = mutation({
     return ctx.db.patch(id, { status: 'archived', updatedAt: Date.now() })
   }
 })
+
+async function deleteVehicle(ctx: any, id: any) {
+  const vehicle = await ctx.db.get(id)
+  if (!vehicle) return false
+
+  for (const photo of vehicle.photos || []) {
+    try {
+      await ctx.storage.delete(photo.storageId)
+    } catch {
+      // If a file was already removed, still delete the vehicle record.
+    }
+  }
+
+  const photoRows = await ctx.db
+    .query('inventoryPhotos')
+    .withIndex('by_vehicle', (q: any) => q.eq('vehicleId', id))
+    .collect()
+  for (const photoRow of photoRows) {
+    await ctx.db.delete(photoRow._id)
+  }
+
+  await ctx.db.delete(id)
+  return true
+}
+
+export const remove = mutation({
+  args: { id: v.id('inventoryVehicles') },
+  handler: async (ctx, { id }) => {
+    await requireAdmin(ctx)
+    return deleteVehicle(ctx, id)
+  }
+})
+
+export const removeMany = mutation({
+  args: { ids: v.array(v.id('inventoryVehicles')) },
+  handler: async (ctx, { ids }) => {
+    await requireAdmin(ctx)
+    let deleted = 0
+    for (const id of ids) {
+      if (await deleteVehicle(ctx, id)) deleted += 1
+    }
+    return { deleted }
+  }
+})

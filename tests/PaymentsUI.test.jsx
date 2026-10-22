@@ -68,3 +68,10 @@ test('cancelled customer links cannot open another checkout', () => {
   expect(screen.getByText(/payment link was cancelled/)).toBeTruthy()
   expect(screen.queryByRole('button', { name: 'Continue to Afterpay' })).toBeNull()
 })
+test.each(['CANCELLED', 'UNKNOWN', ''])('a return with status %s never attempts capture', async status => {
+  window.history.replaceState({}, '', `/after-pay.html?payment=${token}&return=1&status=${status}&orderToken=provider-token`)
+  state.publicRequest.status = 'checkout_started'; state.publicRequest.checkoutEnabled = true
+  await act(async () => render(<PaymentPage />))
+  expect(state.complete).not.toHaveBeenCalled()
+  expect(screen.queryByRole('button', { name: 'Retry payment verification' })).toBeNull()
+})

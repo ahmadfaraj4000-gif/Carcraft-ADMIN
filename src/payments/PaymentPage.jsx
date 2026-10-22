@@ -9,7 +9,8 @@ export default function PaymentPage() {
   const token = params.get('payment') || ''
   const checkoutToken = params.get('orderToken') || ''
   const returning = params.get('return') === '1'
-  const cancelled = params.get('cancel') === '1'
+  const cancelled = params.get('cancel') === '1' || params.get('status') === 'CANCELLED'
+  const confirmedReturn = returning && params.get('status') === 'SUCCESS' && !cancelled
   const validToken = /^[a-f0-9]{64}$/.test(token)
   const request = useQuery(api.payments.publicRequest, validToken ? { token } : 'skip')
   const startCheckout = useAction(api.afterpay.startCheckout)
@@ -26,11 +27,11 @@ export default function PaymentPage() {
     finally { setBusy(false) }
   }
   useEffect(() => {
-    if (returning && checkoutToken && request && ['checkout_started', 'processing', 'review'].includes(request.status) && !startedVerification.current) {
+    if (confirmedReturn && checkoutToken && request && ['checkout_started', 'processing', 'review'].includes(request.status) && !startedVerification.current) {
       startedVerification.current = true
       void verify()
     }
-  }, [returning, checkoutToken, request?.status])
+  }, [confirmedReturn, checkoutToken, request?.status])
 
   async function pay(event) {
     event.preventDefault(); setBusy(true); setError('')
@@ -61,7 +62,8 @@ export default function PaymentPage() {
           {!closed && !verifying && !request.checkoutEnabled && <div className="invoice-notice"><strong>Online payment is not available yet.</strong><p>Your invoice is ready to review. Please call Car Craft to arrange payment.</p></div>}
           {cancelled && !closed && !verifying && <p className="invoice-muted">You returned from Afterpay. No payment has been confirmed.</p>}
           {returning && !checkoutToken && !closed && <div className="invoice-notice">The checkout reference is missing. Please contact Car Craft to check your payment before trying again.</div>}
-          {returning && checkoutToken && !closed && <button className="invoice-button" disabled={busy} onClick={verify}>{busy ? 'Verifying payment…' : 'Retry payment verification'}</button>}
+          {returning && checkoutToken && !confirmedReturn && !cancelled && !closed && <div className="invoice-notice">Afterpay did not return a successful checkout confirmation. Please contact Car Craft to check your payment.</div>}
+          {confirmedReturn && checkoutToken && !closed && <button className="invoice-button" disabled={busy} onClick={verify}>{busy ? 'Verifying payment…' : 'Retry payment verification'}</button>}
           {checkoutAllowed && <form onSubmit={pay}>
             <p>Continue to Afterpay to review your available payment options.</p>
             <div className="invoice-name-row"><label>First name<input required maxLength={100} autoComplete="given-name" value={customer.givenNames} onChange={e => setCustomer({ ...customer, givenNames: e.target.value })} /></label><label>Last name<input required maxLength={100} autoComplete="family-name" value={customer.surname} onChange={e => setCustomer({ ...customer, surname: e.target.value })} /></label></div>

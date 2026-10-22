@@ -12,7 +12,7 @@ function config(requireEnabled = true) {
   return { environment: settings.environment!, merchantId: process.env.AFTERPAY_MERCHANT_ID!, secret: process.env.AFTERPAY_SECRET_KEY!, base: settings.environment === 'production' ? 'https://global-api.afterpay.com' : 'https://global-api-sandbox.afterpay.com' }
 }
 class ProviderError extends Error {
-  constructor(public status: number) { super('Payment provider request failed') }
+  constructor(public status: number, public code?: string, public reference?: string) { super('Payment provider request failed') }
 }
 async function request(path: string, body?: unknown, requireEnabled = true) {
   const c = config(requireEnabled)
@@ -20,10 +20,16 @@ async function request(path: string, body?: unknown, requireEnabled = true) {
     method: body === undefined ? 'GET' : 'POST',
     headers: { Authorization: `Basic ${Buffer.from(`${c.merchantId}:${c.secret}`).toString('base64')}`, 'Content-Type': 'application/json', Accept: 'application/json', 'User-Agent': `CarCraft/1.0 (Merchant/${c.merchantId})` },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(75000),
+    // Capture documents up to 10 seconds to connect plus 70 seconds to read.
+    signal: AbortSignal.timeout(path === '/payments/capture' ? 85000 : 35000),
     redirect: 'error'
   })
-  if (!response.ok) throw new ProviderError(response.status)
+  if (!response.ok) {
+    const data = await response.json().catch(() => null)
+    const safeId = (value: unknown) => typeof value === 'string' && /^[a-zA-Z0-9_-]{1,100}$/.test(value) ? value : undefined
+    // Preserve support identifiers, never a raw provider message or response body.
+    throw new ProviderError(response.status, safeId(data?.errorCode), safeId(data?.errorId))
+  }
   return response.json()
 }
 async function limits(ctx: any, force = false) {
@@ -32,9 +38,10 @@ async function limits(ctx: any, force = false) {
   if (!force && saved && saved.environment === c.environment && saved.merchantId === c.merchantId && saved.checkedAt > Date.now() - DAY) return saved
   const data = await request('/configuration', undefined, false)
   // API v2 uses an object; some legacy accounts still return a configuration array.
-  const entry = Array.isArray(data) ? data.find(x => x.minimumAmount?.currency === 'USD' && x.maximumAmount?.currency === 'USD') : data
-  if (entry?.minimumAmount?.currency !== 'USD' || entry?.maximumAmount?.currency !== 'USD') throw new Error('USD configuration unavailable')
-  const minimumCents = moneyToCents(entry.minimumAmount.amount)
+  const entry = Array.isArray(data) ? data.find(x => x.maximumAmount?.currency === 'USD') : data
+  if (entry?.maximumAmount?.currency !== 'USD' || (entry.minimumAmount !== undefined && entry.minimumAmount?.currency !== 'USD')) throw new Error('USD configuration unavailable')
+  // Afterpay may omit minimumAmount for merchants without a minimum order value.
+  const minimumCents = entry.minimumAmount === undefined ? 0 : moneyToCents(entry.minimumAmount.amount)
   const maximumCents = moneyToCents(entry.maximumAmount.amount)
   if (maximumCents < minimumCents || maximumCents < 1) throw new Error('Invalid merchant limits')
   const result = { environment: c.environment, merchantId: c.merchantId, minimumCents, maximumCents }
@@ -51,7 +58,11 @@ export const checkConnection = action({ args: {}, handler: async (ctx): Promise<
   try {
     const data = await limits(ctx, true)
     return { environment: data.environment, minimumCents: data.minimumCents, maximumCents: data.maximumCents }
-  } catch { throw new ConvexError('Afterpay could not verify this connection. Check the environment, merchant credentials, and online account access.') }
+  } catch (error) {
+    const detail = error instanceof ProviderError
+      ? ` HTTP ${error.status}${error.code ? ` (${error.code})` : ''}.${error.reference ? ` Support reference: ${error.reference}.` : ''}` : ''
+    throw new ConvexError(`Afterpay could not verify this connection. Check the environment, merchant credentials, and online account access.${detail}`)
+  }
 } })
 const consumer = v.object({ givenNames: v.string(), surname: v.string(), email: v.string(), phoneNumber: v.string() })
 export const startCheckout = action({ args: { token: v.string(), consumer }, handler: async (ctx, args): Promise<any> => {
@@ -74,9 +85,9 @@ export const startCheckout = action({ args: { token: v.string(), consumer }, han
       items: [{ name: `Car Craft invoice ${r.invoiceNumber}`, quantity: 1, price: { amount: (r.amountCents / 100).toFixed(2), currency: 'USD' } }]
     })
     const url = new URL(data.redirectCheckoutUrl)
-    const expectedHost = c.environment === 'production' ? 'portal.afterpay.com' : 'portal.sandbox.afterpay.com'
-    // Only follow the documented checkout host, never an arbitrary URL from a response.
-    if (url.protocol !== 'https:' || url.hostname !== expectedHost || url.username || url.password || typeof data.token !== 'string' || !data.token || data.token.length > 500 || !Number.isFinite(Date.parse(data.expires)) || Date.parse(data.expires) <= Date.now()) throw new Error('Invalid checkout response')
+    const checkoutHosts = c.environment === 'production' ? ['portal.afterpay.com', 'cash.app', 'api.cash.app'] : ['portal.sandbox.afterpay.com']
+    // US migration adds exact Cash App hosts. Never accept suffix matches or arbitrary ports.
+    if (url.protocol !== 'https:' || !checkoutHosts.includes(url.hostname) || url.port || url.username || url.password || typeof data.token !== 'string' || !data.token || data.token.length > 500 || !Number.isFinite(Date.parse(data.expires)) || Date.parse(data.expires) <= Date.now()) throw new Error('Invalid checkout response')
     await ctx.runMutation(internal.payments.saveCheckout, { id: r._id, attemptId, token: data.token, url: url.href, expiresAt: Date.parse(data.expires) })
     return { url: url.href }
   } catch {
@@ -90,8 +101,7 @@ async function recordPayment(ctx: any, r: any, data: any) {
   let status: 'paid' | 'declined' | 'review' = 'review'
   if (matched && data.status === 'APPROVED' && data.paymentState === 'CAPTURED' && typeof data.id === 'string' && data.id) status = 'paid'
   else if (matched && data.status === 'DECLINED') status = 'declined'
-  await ctx.runMutation(internal.payments.recordResult, { id: r._id, checkoutToken: r.checkoutToken, status, ...(typeof data?.id === 'string' ? { orderId: data.id } : {}) })
-  return { status }
+  return await ctx.runMutation(internal.payments.recordResult, { id: r._id, checkoutToken: r.checkoutToken, captureVersion: r.captureVersion || 0, status, ...(typeof data?.id === 'string' ? { orderId: data.id } : {}) })
 }
 export const completeCheckout = action({ args: { token: v.string(), checkoutToken: v.string() }, handler: async (ctx, args): Promise<any> => {
   // Finish payments already started even if new checkout creation has been disabled.
@@ -103,13 +113,13 @@ export const completeCheckout = action({ args: { token: v.string(), checkoutToke
     return await recordPayment(ctx, r, data)
   } catch {
     // Do not issue another checkout after an ambiguous timeout. The same token is safely retryable.
-    await ctx.runMutation(internal.payments.recordResult, { id: r._id, checkoutToken: r.checkoutToken, status: 'review' })
-    return { status: 'review' }
+    return await ctx.runMutation(internal.payments.recordResult, { id: r._id, checkoutToken: r.checkoutToken, captureVersion: r.captureVersion || 0, status: 'review' })
   }
 } })
 export const checkPayment = action({ args: { id: v.id('paymentRequests') }, handler: async (ctx, { id }): Promise<any> => {
   const r = await ctx.runQuery(internal.payments.getForAdmin, { id })
   if (!r?.checkoutToken) throw new ConvexError('This request has not started checkout.')
+  if (r.status === 'processing' && (r.captureLockUntil || 0) > Date.now()) throw new ConvexError('Payment capture is still in progress. Wait before checking its status.')
   const c = config(false)
   if (r.environment !== c.environment || r.merchantId !== c.merchantId) throw new ConvexError('Restore the original payment environment before checking this request.')
   if (r.status === 'paid' || r.status === 'cancelled') return { status: r.status }

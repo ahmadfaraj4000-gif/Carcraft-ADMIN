@@ -43,7 +43,7 @@ export default defineSchema({
     environment: v.optional(v.string()), merchantId: v.optional(v.string()),
     checkoutAttempts: v.number(), attemptId: v.optional(v.string()), checkoutLockUntil: v.optional(v.number()),
     checkoutToken: v.optional(v.string()), checkoutUrl: v.optional(v.string()), checkoutExpiresAt: v.optional(v.number()),
-    captureLockUntil: v.optional(v.number()), orderId: v.optional(v.string()), paidAt: v.optional(v.number())
+    captureLockUntil: v.optional(v.number()), captureVersion: v.optional(v.number()), orderId: v.optional(v.string()), paidAt: v.optional(v.number())
   }).index('by_invoice', ['invoiceKey']).index('by_token_hash', ['tokenHash']).index('by_status', ['status']),
   paymentEvents: defineTable({ requestId: v.id('paymentRequests'), type: v.string(), createdAt: v.number() }).index('by_request', ['requestId']),
   paymentConfiguration: defineTable({ key: v.string(), environment: v.string(), merchantId: v.string(), minimumCents: v.number(), maximumCents: v.number(), checkedAt: v.number() }).index('by_key', ['key']),

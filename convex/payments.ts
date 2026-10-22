@@ -70,7 +70,7 @@ export const beginCheckout = internalMutation({ args: { token: v.string(), envir
   const r = await findByToken(ctx, args.token)
   if (!r) throw new ConvexError('This payment link is unavailable.')
   if (r.environment && (r.environment !== args.environment || r.merchantId !== args.merchantId)) throw new ConvexError('This payment needs assistance from Car Craft. Please call the shop.')
-  if (['paid', 'cancelled', 'processing', 'review'].includes(r.status)) throw new ConvexError('This invoice cannot start another checkout. Check its payment status.')
+  if (['paid', 'declined', 'cancelled', 'processing', 'review'].includes(r.status)) throw new ConvexError('This invoice cannot start another checkout. Check its payment status.')
   if (r.expiresAt <= Date.now()) throw new ConvexError('This payment link has expired. Ask Car Craft for a new link.')
   if (r.amountCents < args.minimumCents || r.amountCents > args.maximumCents) throw new ConvexError('This invoice is outside the available Afterpay payment limits. Please contact Car Craft.')
   if (r.checkoutToken) {
@@ -104,16 +104,20 @@ export const claimCapture = internalMutation({ args: { token: v.string(), checko
   if (!['checkout_started', 'processing', 'review'].includes(r.status)) throw new ConvexError('This payment request is no longer available.')
   // Checkout started while link valid may finish after link expiration; never expire an in-flight capture.
   if (r.status === 'processing' && (r.captureLockUntil || 0) > Date.now()) throw new ConvexError('Payment verification is in progress. Please wait a moment.')
-  await ctx.db.patch(r._id, { status: 'processing', captureLockUntil: Date.now() + 90000, updatedAt: Date.now() })
+  const captureVersion = (r.captureVersion || 0) + 1
+  await ctx.db.patch(r._id, { status: 'processing', captureVersion, captureLockUntil: Date.now() + 120000, updatedAt: Date.now() })
   await event(ctx, r._id, 'capture_requested')
-  return { ...r, alreadyPaid: false }
+  return { ...r, captureVersion, alreadyPaid: false }
 } })
-export const recordResult = internalMutation({ args: { id: requestId, checkoutToken: v.string(), status: v.union(v.literal('paid'), v.literal('declined'), v.literal('review')), orderId: v.optional(v.string()) }, handler: async (ctx, args) => {
+export const recordResult = internalMutation({ args: { id: requestId, checkoutToken: v.string(), captureVersion: v.number(), status: v.union(v.literal('paid'), v.literal('declined'), v.literal('review')), orderId: v.optional(v.string()) }, handler: async (ctx, args) => {
   const r = await ctx.db.get(args.id)
-  if (!r || r.checkoutToken !== args.checkoutToken || r.status === 'paid' || r.status === 'cancelled') return
+  if (!r || r.checkoutToken !== args.checkoutToken) throw new Error('Payment result does not match the request')
+  // A GET started before capture (or an older timed-out capture) cannot overwrite a newer attempt.
+  if ((r.captureVersion || 0) !== args.captureVersion || r.status === 'paid' || r.status === 'cancelled') return { status: r.status }
   // A definitive verified result can arrive after a network timeout and supersedes review.
-  if (r.status === 'declined' && args.status === 'review') return
+  if (r.status === 'declined' && args.status === 'review') return { status: r.status }
   await ctx.db.patch(r._id, { status: args.status, orderId: args.orderId || r.orderId, paidAt: args.status === 'paid' ? Date.now() : r.paidAt, captureLockUntil: 0, updatedAt: Date.now() })
   await event(ctx, r._id, args.status)
+  return { status: args.status }
 } })
 export const getForAdmin = internalQuery({ args: { id: requestId }, handler: async (ctx, { id }) => { await requireAdmin(ctx); return ctx.db.get(id) } })

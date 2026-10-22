@@ -30,7 +30,7 @@ beforeEach(() => {
     if (url.endsWith('/payments/capture') || url.includes('/payments/token:')) {
       if (captureGate) await captureGate
       if (captureMode === 'timeout') throw new Error('Network interrupted')
-      return Response.json({ id: 'provider-order-123', token: lastCheckoutToken, merchantReference: checkoutReference, status: captureMode === 'declined' ? 'DECLINED' : 'APPROVED', paymentState: captureMode === 'authorized' ? 'AUTH_APPROVED' : 'CAPTURED', originalAmount: { amount: captureMode === 'wrong_amount' ? '99.00' : '100.25', currency: 'USD' } })
+      return Response.json({ id: 'provider-order-123', token: captureMode === 'wrong_token' ? 'other-token' : lastCheckoutToken, merchantReference: captureMode === 'wrong_reference' ? 'other-invoice' : checkoutReference, status: captureMode === 'declined' ? 'DECLINED' : 'APPROVED', paymentState: captureMode === 'authorized' ? 'AUTH_APPROVED' : captureMode === 'partial' ? 'PARTIALLY_CAPTURED' : 'CAPTURED', originalAmount: { amount: captureMode === 'wrong_amount' ? '99.00' : '100.25', currency: captureMode === 'wrong_currency' ? 'CAD' : 'USD' } })
     }
     throw new Error('Unexpected request')
   })
@@ -132,7 +132,7 @@ test('only server-verified, matching, fully captured payments become paid; repea
   await expect(admin.mutation(api.payments.cancel, { id: r.id })).rejects.toThrow('cannot be cancelled')
   await expect(create(admin)).rejects.toThrow('already has')
 })
-test.each(['wrong_amount', 'authorized', 'timeout'])('uncertain capture (%s) blocks another payment and can be reconciled', async mode => {
+test.each(['wrong_amount', 'wrong_token', 'wrong_reference', 'wrong_currency', 'partial', 'authorized', 'timeout'])('uncertain capture (%s) blocks another payment and can be reconciled', async mode => {
   const { t, admin } = await setup()
   const r = await create(admin)
   await start(t, r.token)
@@ -152,6 +152,7 @@ test('processing locks prevent cancellation, duplicate capture and invoice repla
   const operation = t.action(api.afterpay.completeCheckout, { token: r.token, checkoutToken: lastCheckoutToken })
   await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/payments/capture'))).toBe(true))
   await expect(t.action(api.afterpay.completeCheckout, { token: r.token, checkoutToken: lastCheckoutToken })).rejects.toThrow('in progress')
+  await expect(admin.action(api.afterpay.checkPayment, { id: r.id })).rejects.toThrow('still in progress')
   await expect(admin.mutation(api.payments.cancel, { id: r.id })).rejects.toThrow('cannot be cancelled')
   await expect(create(admin)).rejects.toThrow('already has')
   release(); expect(await operation).toEqual({ status: 'paid' })
@@ -179,4 +180,75 @@ test('a malicious checkout URL is never returned to customers', async () => {
   fetchMock.mockResolvedValueOnce(Response.json({ token: 'x', expires: new Date(Date.now() + 3600000).toISOString(), redirectCheckoutUrl: 'https://attacker.example/checkout' }))
   await expect(start(t, r.token)).rejects.toThrow('could not be opened')
   expect((await admin.query(api.payments.list, {}))[0].status).toBe('pending')
+})
+
+test.each([false, true])('a merchant with no minimum amount can accept checkout (legacy array: %s)', async legacy => {
+  const { t, admin } = await setup()
+  const data = { maximumAmount: { amount: '2000.00', currency: 'USD' } }
+  fetchMock.mockResolvedValueOnce(Response.json(legacy ? [data] : data))
+  expect(await admin.action(api.afterpay.checkConnection, {})).toMatchObject({ minimumCents: 0, maximumCents: 200000 })
+  const r = await create(admin)
+  expect(await start(t, r.token)).toHaveProperty('url')
+})
+
+test.each(['cash.app', 'api.cash.app'])('US migration checkout host %s is accepted only for production', async host => {
+  vi.stubEnv('AFTERPAY_ENVIRONMENT', 'production')
+  const { t, admin } = await setup()
+  fetchMock.mockResolvedValueOnce(Response.json({ maximumAmount: { amount: '2000.00', currency: 'USD' } }))
+  await admin.action(api.afterpay.checkConnection, {})
+  const r = await create(admin)
+  fetchMock.mockResolvedValueOnce(Response.json({ token: 'migration-token', expires: new Date(Date.now() + 3600000).toISOString(), redirectCheckoutUrl: `https://${host}/checkout?token=migration-token` }))
+  expect(await start(t, r.token)).toEqual({ url: `https://${host}/checkout?token=migration-token` })
+})
+
+test.each(['https://portal.sandbox.afterpay.com.attacker.example/', 'http://portal.sandbox.afterpay.com/', 'https://portal.sandbox.afterpay.com:8443/', 'https://user@portal.sandbox.afterpay.com/', 'https://cash.app/'])('unsafe or wrong-environment redirect %s is rejected', async url => {
+  const { t, admin } = await setup()
+  await admin.action(api.afterpay.checkConnection, {})
+  const r = await create(admin)
+  fetchMock.mockResolvedValueOnce(Response.json({ token: 'token', expires: new Date(Date.now() + 3600000).toISOString(), redirectCheckoutUrl: url }))
+  await expect(start(t, r.token)).rejects.toThrow('could not be opened')
+})
+
+test('declined payments require a replacement request instead of reusing a declined token', async () => {
+  const { t, admin } = await setup()
+  const r = await create(admin)
+  await start(t, r.token)
+  captureMode = 'declined'
+  expect(await t.action(api.afterpay.completeCheckout, { token: r.token, checkoutToken: lastCheckoutToken })).toEqual({ status: 'declined' })
+  await expect(start(t, r.token)).rejects.toThrow('cannot start')
+  await admin.mutation(api.payments.cancel, { id: r.id })
+  expect((await create(admin)).id).not.toBe(r.id)
+})
+
+test('a reconciliation started before capture cannot overwrite that capture or unlock cancellation', async () => {
+  const { t, admin } = await setup()
+  const r = await create(admin)
+  await start(t, r.token)
+  let releaseRead!: () => void
+  const readGate = new Promise<void>(resolve => { releaseRead = resolve })
+  fetchMock.mockImplementationOnce(async () => {
+    await readGate
+    return Response.json({ id: 'provider-order-123', token: lastCheckoutToken, merchantReference: checkoutReference, status: 'DECLINED', paymentState: 'AUTH_DECLINED', originalAmount: { amount: '100.25', currency: 'USD' } })
+  })
+  const read = admin.action(api.afterpay.checkPayment, { id: r.id })
+  await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.includes('/payments/token:'))).toBe(true))
+  let releaseCapture!: () => void
+  captureGate = new Promise<void>(resolve => { releaseCapture = resolve })
+  const capture = t.action(api.afterpay.completeCheckout, { token: r.token, checkoutToken: lastCheckoutToken })
+  await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.endsWith('/payments/capture'))).toBe(true))
+  releaseRead()
+  expect(await read).toEqual({ status: 'processing' })
+  await expect(admin.mutation(api.payments.cancel, { id: r.id })).rejects.toThrow('cannot be cancelled')
+  releaseCapture()
+  expect(await capture).toEqual({ status: 'paid' })
+})
+
+test('admin connection errors include safe support identifiers without provider body contents', async () => {
+  const { admin } = await setup()
+  fetchMock.mockResolvedValueOnce(Response.json({ errorCode: 'merchant_channel_setup_error', errorId: 'support123', message: 'SECRET CUSTOMER DATA' }, { status: 403 }))
+  let error: any
+  try { await admin.action(api.afterpay.checkConnection, {}) } catch (e) { error = e }
+  expect(error.data).toContain('HTTP 403 (merchant_channel_setup_error)')
+  expect(error.data).toContain('support123')
+  expect(error.data).not.toContain('SECRET CUSTOMER DATA')
 })

@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as afterpay from "../afterpay.js";
 import type * as appointments from "../appointments.js";
 import type * as auth from "../auth.js";
 import type * as crons from "../crons.js";
@@ -16,8 +17,10 @@ import type * as estimateLeads from "../estimateLeads.js";
 import type * as estimatePhotoMaintenance from "../estimatePhotoMaintenance.js";
 import type * as http from "../http.js";
 import type * as inventory from "../inventory.js";
+import type * as lib_payments from "../lib/payments.js";
 import type * as lib_requireAdmin from "../lib/requireAdmin.js";
 import type * as notifications from "../notifications.js";
+import type * as payments from "../payments.js";
 import type * as timeClock from "../timeClock.js";
 
 import type {
@@ -27,6 +30,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  afterpay: typeof afterpay;
   appointments: typeof appointments;
   auth: typeof auth;
   crons: typeof crons;
@@ -35,8 +39,10 @@ declare const fullApi: ApiFromModules<{
   estimatePhotoMaintenance: typeof estimatePhotoMaintenance;
   http: typeof http;
   inventory: typeof inventory;
+  "lib/payments": typeof lib_payments;
   "lib/requireAdmin": typeof lib_requireAdmin;
   notifications: typeof notifications;
+  payments: typeof payments;
   timeClock: typeof timeClock;
 }>;
 

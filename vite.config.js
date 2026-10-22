@@ -6,7 +6,8 @@ export default defineConfig({
   build: {
     rollupOptions: {
       input: {
-        admin: 'admin.html'
+        admin: 'admin.html',
+        payment: 'after-pay.html'
       }
     }
   }

@@ -10,6 +10,7 @@ import CustomerDatabase from './components/CustomerDatabase'
 import InventoryManager from './components/InventoryManager'
 import CalendarView from './components/CalendarView'
 import Payroll from './components/Payroll'
+import AfterpayManager from './components/AfterpayManager'
 import logoUrl from './assets/images/branding/carcraft-logo.png'
 
 function Icon({ children }) {
@@ -63,6 +64,12 @@ const icons = {
       <path d="M12 7.5V12l3 2M8.5 3.8 7 2.5M15.5 3.8 17 2.5" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
     </Icon>
   ),
+  afterpay: (
+    <Icon>
+      <rect x="3.5" y="5" width="17" height="14" rx="2.5" stroke="currentColor" strokeWidth="1.8" />
+      <path d="M3.5 9.5h17M7.5 14h3" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+    </Icon>
+  ),
   menu: (
     <Icon>
       <path d="M5 7h14M5 12h14M5 17h14" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
@@ -83,7 +90,8 @@ const navItems = [
   ['customers', 'Customers'],
   ['inventory', 'Inventory'],
   ['calendar', 'Calendar'],
-  ['payroll', 'Payroll']
+  ['payroll', 'Payroll'],
+  ['afterpay', 'Invoice Payments']
 ]
 
 export default function App() {
@@ -170,6 +178,7 @@ export default function App() {
         {activeTab === 'inventory' ? <InventoryManager vehicles={inventory} search={search} stats={stats} /> : null}
         {activeTab === 'calendar' ? <CalendarView appointments={appointments} /> : null}
         {activeTab === 'payroll' ? <Payroll /> : null}
+        {activeTab === 'afterpay' ? <AfterpayManager /> : null}
       </main>
     </div>
   )

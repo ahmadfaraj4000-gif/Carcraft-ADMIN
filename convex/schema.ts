@@ -35,6 +35,18 @@ const vehicleInfo = {
 
 export default defineSchema({
   ...authTables,
+  paymentRequests: defineTable({
+    invoiceNumber: v.string(), invoiceKey: v.string(), amountCents: v.number(), currency: v.literal('USD'),
+    note: v.string(), accessToken: v.string(), tokenHash: v.string(),
+    status: v.union(v.literal('pending'), v.literal('creating_checkout'), v.literal('checkout_started'), v.literal('processing'), v.literal('paid'), v.literal('declined'), v.literal('cancelled'), v.literal('expired'), v.literal('review')),
+    createdBy: v.id('users'), createdAt: v.number(), updatedAt: v.number(), expiresAt: v.number(),
+    environment: v.optional(v.string()), merchantId: v.optional(v.string()),
+    checkoutAttempts: v.number(), attemptId: v.optional(v.string()), checkoutLockUntil: v.optional(v.number()),
+    checkoutToken: v.optional(v.string()), checkoutUrl: v.optional(v.string()), checkoutExpiresAt: v.optional(v.number()),
+    captureLockUntil: v.optional(v.number()), orderId: v.optional(v.string()), paidAt: v.optional(v.number())
+  }).index('by_invoice', ['invoiceKey']).index('by_token_hash', ['tokenHash']).index('by_status', ['status']),
+  paymentEvents: defineTable({ requestId: v.id('paymentRequests'), type: v.string(), createdAt: v.number() }).index('by_request', ['requestId']),
+  paymentConfiguration: defineTable({ key: v.string(), environment: v.string(), merchantId: v.string(), minimumCents: v.number(), maximumCents: v.number(), checkedAt: v.number() }).index('by_key', ['key']),
   adminProfiles: defineTable({
     userId: v.id('users'),
     name: v.optional(v.string()),

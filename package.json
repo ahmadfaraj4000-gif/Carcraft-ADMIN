@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "convex:dev": "convex dev",
     "convex:deploy": "convex deploy",
-    "test": "vitest run"
+    "test": "vitest run",
+    "check:payments": "tsc --noEmit --module ESNext --moduleResolution bundler --target es2022 --skipLibCheck --types node convex/afterpay.ts convex/payments.ts"
   },
   "dependencies": {
     "@convex-dev/auth": "^0.0.80",
@@ -25,6 +26,8 @@
     "convex-test": "^0.0.41",
     "jsdom": "^26.1.0",
     "sharp": "^0.35.5",
-    "vitest": "^3.2.7"
+    "vitest": "^3.2.7",
+    "typescript": "^5.9.3",
+    "@types/node": "^22.20.0"
   }
 }

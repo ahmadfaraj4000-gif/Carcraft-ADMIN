@@ -30,6 +30,7 @@ jobs:
           cache: npm
 
       - run: npm ci
+      - run: npm run check:payments
       - run: npm test
       - run: npm run build
 

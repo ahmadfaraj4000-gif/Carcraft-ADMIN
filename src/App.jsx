@@ -12,6 +12,7 @@ import CalendarView from './components/CalendarView'
 import Payroll from './components/Payroll'
 import AfterpayManager from './components/AfterpayManager'
 import logoUrl from './assets/images/branding/carcraft-logo.png'
+import './rental-link.css'
 
 function Icon({ children }) {
   return (
@@ -150,6 +151,17 @@ export default function App() {
               <span>{label}</span>
             </button>
           ))}
+          <a
+            className="rental-link"
+            href="https://rentmect.com/cars-2.html"
+            target="_blank"
+            rel="noopener noreferrer"
+            title="RentMe CT Rentals (opens in a new tab)"
+            aria-label="RentMe CT Rentals (opens in a new tab)"
+          >
+            {icons.inventory}
+            <span>RentMe CT Rentals ↗</span>
+          </a>
         </nav>
         <div className="profile-box">
           <span className="role-pill">Admin</span>

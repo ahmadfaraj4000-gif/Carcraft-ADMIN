@@ -1,0 +1,24 @@
+.side-nav .rental-link {
+  display: grid;
+  grid-template-columns: 22px 1fr;
+  column-gap: 10px;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, .08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, .07);
+  color: #fff;
+  text-decoration: none;
+  font-weight: 850;
+  line-height: 1.15;
+}
+.side-nav .rental-link:hover { background: rgba(255, 255, 255, .12); }
+.side-nav .rental-link:focus-visible { outline: 2px solid #fff; outline-offset: -3px; }
+.sidebar.collapsed .rental-link {
+  grid-template-columns: 1fr;
+  justify-items: center;
+  min-height: 38px;
+  padding: 9px;
+}
+.sidebar.collapsed .rental-link span { display: none; }

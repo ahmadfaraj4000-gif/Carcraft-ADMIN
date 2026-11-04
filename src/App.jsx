@@ -153,14 +153,14 @@ export default function App() {
           ))}
           <a
             className="rental-link"
-            href="https://rentmect.com/cars-2.html"
+            href="https://login.rentmect.com/?merchant=carcraft"
             target="_blank"
             rel="noopener noreferrer"
-            title="RentMe CT Rentals (opens in a new tab)"
-            aria-label="RentMe CT Rentals (opens in a new tab)"
+            title="Book RentMeCT rental (opens in a new tab)"
+            aria-label="Book RentMeCT rental (opens in a new tab)"
           >
             {icons.inventory}
-            <span>RentMe CT Rentals ↗</span>
+            <span>Book RentMeCT rental ↗</span>
           </a>
         </nav>
         <div className="profile-box">

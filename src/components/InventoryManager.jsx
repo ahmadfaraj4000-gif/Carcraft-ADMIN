@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation } from 'convex/react'
 import { api } from '../../convex/_generated/api'
+import './inventory-photos.css'
 import fallbackVehicleImage from '../assets/images/branding/carcraft-storefront.png'
 
 const emptyVehicle = {
@@ -13,7 +14,7 @@ const emptyVehicle = {
   bodyType: '',
   transmission: '',
   vin: '',
-  titleStatus: 'Clean Title',
+  titleStatus: '',
   status: 'available',
   description: '',
   featured: false,
@@ -30,6 +31,53 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
   const [form, setForm] = useState(emptyVehicle)
   const [files, setFiles] = useState([])
   const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [previews, setPreviews] = useState([])
+  const uploadCache = useRef(new Map())
+  const fileInput = useRef(null)
+
+  useEffect(() => {
+    const next = files.map(file => URL.createObjectURL(file))
+    setPreviews(next)
+    return () => next.forEach(url => URL.revokeObjectURL(url))
+  }, [files])
+
+  function resetEditor() {
+    setForm({ ...emptyVehicle, photos: [] })
+    setFiles([])
+    setError('')
+    uploadCache.current.clear()
+    if (fileInput.current) fileInput.current.value = ''
+  }
+
+  function addFiles(event) {
+    const selected = Array.from(event.target.files || [])
+    event.target.value = ''
+    if (selected.some(file => !/^image\/(jpeg|png|webp|gif)$/.test(file.type))) {
+      setError('Choose JPG, PNG, WebP or GIF photos. PDF documents cannot be displayed as vehicle photos.')
+      return
+    }
+    if (selected.some(file => file.size > 20 * 1024 * 1024)) {
+      setError('Please choose photos smaller than 20 MB each.')
+      return
+    }
+    setError('')
+    setNotice('')
+    setFiles(current => [...current, ...selected])
+  }
+
+  function movePhoto(index, direction, pending = false) {
+    const reorder = items => {
+      const next = [...items]
+      const target = index + direction
+      if (target < 0 || target >= next.length) return items
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    }
+    if (pending) setFiles(reorder)
+    else setForm(current => ({ ...current, photos: reorder(current.photos) }))
+  }
   const [selectedIds, setSelectedIds] = useState(() => new Set())
   const [deleting, setDeleting] = useState(false)
   const [deleteDialog, setDeleteDialog] = useState(null)
@@ -58,40 +106,55 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
 
   async function uploadPhotos() {
     const uploaded = []
-    for (const [index, file] of files.entries()) {
-      const url = await getUploadUrl()
-      const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': file.type }, body: file })
-      const { storageId } = await res.json()
-      uploaded.push({ storageId, name: file.name, order: index })
+    for (const file of files) {
+      let photo = uploadCache.current.get(file)
+      if (!photo) {
+        const url = await getUploadUrl()
+        const res = await fetch(url, { method: 'POST', headers: { 'Content-Type': file.type }, body: file })
+        if (!res.ok) throw new Error(`Could not upload ${file.name}. Please try again.`)
+        const { storageId } = await res.json()
+        if (!storageId) throw new Error(`No upload confirmation for ${file.name}. Please try again.`)
+        photo = { storageId, name: file.name }
+        uploadCache.current.set(file, photo)
+      }
+      uploaded.push(photo)
     }
     return uploaded
   }
 
   async function submit(event) {
     event.preventDefault()
+    if (saving) return
     setSaving(true)
-    const uploaded = await uploadPhotos()
-    await saveVehicle({
-      id: form.id,
-      year: form.year,
-      make: form.make,
-      model: form.model,
-      price: form.price,
-      mileage: form.mileage,
-      color: form.color,
-      bodyType: form.bodyType,
-      transmission: form.transmission,
-      vin: form.vin,
-      titleStatus: form.titleStatus,
-      status: form.status,
-      description: form.description,
-      featured: form.featured,
-      sortOrder: Number(form.sortOrder) || 100,
-      photos: uploaded.length ? uploaded : (form.photos || []).map(({ storageId, name, order }) => ({ storageId, name, order }))
-    })
-    setForm(emptyVehicle)
-    setFiles([])
-    setSaving(false)
+    setError('')
+    setNotice('')
+    try {
+      const uploaded = await uploadPhotos()
+      await saveVehicle({
+        id: form.id,
+        year: form.year,
+        make: form.make,
+        model: form.model,
+        price: form.price,
+        mileage: form.mileage,
+        color: form.color,
+        bodyType: form.bodyType,
+        transmission: form.transmission,
+        vin: form.vin,
+        titleStatus: form.titleStatus,
+        status: form.status,
+        description: form.description,
+        featured: form.featured,
+        sortOrder: Number.isFinite(Number(form.sortOrder)) ? Number(form.sortOrder) : 100,
+        photos: [...(form.photos || []), ...uploaded].map(({ storageId, name }, order) => ({ storageId, name, order }))
+      })
+      resetEditor()
+      setNotice('Vehicle saved. You can add another car below or edit an existing listing.')
+    } catch (err) {
+      setError(err.message || 'Unable to save this vehicle. Your details and photos are still here; please try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
   async function updateVehicleStatus(car, status) {
@@ -190,6 +253,13 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
       </section>
 
       <form className="panel-form" onSubmit={submit}>
+        {error ? <p className="inventory-form-error" role="alert">{error}</p> : null}
+        {notice ? <p className="inventory-form-notice" role="status">{notice}</p> : null}
+        <fieldset className="inventory-editor-fields" disabled={saving}>
+        <div className="inventory-editor-heading">
+          <h2>{form.id ? 'Edit vehicle' : 'Add a vehicle'}</h2>
+          {form.id ? <button type="button" className="ghost-btn small" onClick={resetEditor}>Add another vehicle</button> : null}
+        </div>
         <p className="eyebrow">{form.id ? 'Edit Vehicle' : 'Add Vehicle'}</p>
         <div className="form-grid">
           {['year', 'make', 'model', 'price', 'mileage', 'color', 'bodyType', 'transmission', 'vin', 'titleStatus', 'sortOrder'].map((key) => (
@@ -198,9 +268,42 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
           <label>Status<select value={form.status} onChange={(e) => set('status', e.target.value)}><option value="available">Available</option><option value="sold">Sold</option><option value="coming_soon">Coming Soon</option><option value="archived">Archived</option></select></label>
           <label className="checkbox-line"><input type="checkbox" checked={form.featured} onChange={(e) => set('featured', e.target.checked)} /> Featured</label>
         </div>
-        <textarea value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Short vehicle description" />
-        <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} />
+        <textarea aria-label="Vehicle description" value={form.description} onChange={(e) => set('description', e.target.value)} placeholder="Short vehicle description" />
+        <section className="inventory-photo-editor" aria-label="Vehicle photos">
+          <h3>Vehicle photos</h3>
+          <p className="muted">Select multiple photos at once, or add more in batches. The first photo is the cover. New uploads are added to this vehicle's existing photos.</p>
+          <label className="inventory-upload-label">Add photos
+            <input ref={fileInput} type="file" accept="image/jpeg,image/png,image/webp,image/gif" multiple onChange={addFiles} />
+          </label>
+          <p>{form.photos.length + files.length} photo{form.photos.length + files.length === 1 ? '' : 's'} selected</p>
+          <div className="inventory-photo-grid">
+            {form.photos.map((photo, index) => (
+              <div className="inventory-photo-tile" key={photo.storageId}>
+                {/\.pdf$/i.test(photo.name || '') ? <div className="inventory-file-placeholder">PDF — replace with photos</div> : <img src={photo.url} alt={`Saved vehicle photo ${index + 1}`} />}
+                <span>{index === 0 ? 'Cover photo' : `Photo ${index + 1}`}</span>
+                <div className="inventory-photo-actions">
+                  <button type="button" disabled={index === 0} onClick={() => movePhoto(index, -1)} aria-label={`Move saved photo ${index + 1} earlier`}>←</button>
+                  <button type="button" disabled={index === form.photos.length - 1} onClick={() => movePhoto(index, 1)} aria-label={`Move saved photo ${index + 1} later`}>→</button>
+                  <button type="button" onClick={() => set('photos', form.photos.filter((_, i) => i !== index))} aria-label={`Remove saved photo ${index + 1}`}>Remove</button>
+                </div>
+              </div>
+            ))}
+            {files.map((file, index) => (
+              <div className="inventory-photo-tile" key={`${file.name}-${index}`}>
+                <img src={previews[index]} alt={`New vehicle photo ${index + 1}`} />
+                <span>{form.photos.length + index === 0 ? 'Cover photo' : `Photo ${form.photos.length + index + 1}`} · New</span>
+                <small>{file.name}</small>
+                <div className="inventory-photo-actions">
+                  <button type="button" disabled={index === 0} onClick={() => movePhoto(index, -1, true)} aria-label={`Move new photo ${index + 1} earlier`}>←</button>
+                  <button type="button" disabled={index === files.length - 1} onClick={() => movePhoto(index, 1, true)} aria-label={`Move new photo ${index + 1} later`}>→</button>
+                  <button type="button" onClick={() => setFiles(current => current.filter((_, i) => i !== index))} aria-label={`Remove new photo ${index + 1}`}>Remove</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
         <button className="primary-btn" disabled={saving}>{saving ? 'Saving...' : 'Save Vehicle'}</button>
+        </fieldset>
       </form>
 
       <div className="inventory-bulk-toolbar">
@@ -244,7 +347,10 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
               <p className="muted">{car.price || 'Call for price'} · {car.mileage || 'Mileage TBD'} · {car.color || 'Color TBD'}</p>
               <p>{car.description}</p>
               <div className="quick-actions">
-                <button className="ghost-btn small" onClick={() => setForm({
+                <button className="ghost-btn small" disabled={saving} onClick={() => {
+                  resetEditor()
+                  setNotice('')
+                  setForm({
                   id: car._id,
                   year: car.year,
                   make: car.make,
@@ -260,8 +366,10 @@ export default function InventoryManager({ vehicles = [], search = '', stats }) 
                   description: car.description || '',
                   featured: car.featured,
                   sortOrder: car.sortOrder,
-                  photos: car.photos || []
-                })}>Edit</button>
+                  photos: (car.photos || []).slice().sort((a, b) => (a.order || 0) - (b.order || 0))
+                })
+                document.querySelector('.inventory-module .panel-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+                }}>Edit</button>
                 {car.status !== 'sold' ? (
                   <button className="ghost-btn small" onClick={() => updateVehicleStatus(car, 'sold')}>Mark Sold</button>
                 ) : null}

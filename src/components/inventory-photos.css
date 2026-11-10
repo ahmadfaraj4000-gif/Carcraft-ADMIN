@@ -1,0 +1,15 @@
+.inventory-editor-fields{border:0;padding:0;margin:0;min-width:0;display:grid;gap:16px;scroll-margin-top:100px}
+.inventory-editor-heading{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
+.inventory-photo-editor{display:grid;gap:12px}
+.inventory-upload-label{display:grid;gap:8px;font-weight:700}
+.inventory-photo-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px}
+.inventory-photo-tile{min-width:0;padding:10px;border:1px solid #64748b55;border-radius:12px;display:grid;gap:8px}
+.inventory-photo-tile img{width:100%;aspect-ratio:4/3;object-fit:contain;background:#e7ebef;border-radius:8px}
+.inventory-photo-tile small{overflow-wrap:anywhere}
+.inventory-photo-actions{display:flex;gap:6px}
+.inventory-photo-actions button{min-width:36px;min-height:36px;border:1px solid #64748b88;border-radius:6px;padding:4px 8px;background:transparent;color:inherit;cursor:pointer}
+.inventory-photo-actions button:disabled{opacity:.35;cursor:default}
+.inventory-photo-actions button:focus-visible{outline:2px solid #d52b1e;outline-offset:2px}
+.inventory-file-placeholder{aspect-ratio:4/3;display:grid;place-items:center;background:#64748b22;border-radius:8px;text-align:center}
+.inventory-form-error{padding:12px;border:1px solid #ef4444;border-radius:8px;color:#b91c1c;background:#fff1f2}
+.inventory-form-notice{padding:12px;border:1px solid #16a34a;border-radius:8px;color:#166534;background:#f0fdf4}

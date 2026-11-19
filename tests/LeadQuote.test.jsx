@@ -74,7 +74,7 @@ test('opens a separate popup with a live preview independent of the internal quo
   fireEvent.click(screen.getByRole('button', {name:'Send estimate email'}))
   expect(screen.getByRole('dialog')).toBeTruthy()
   const preview = () => screen.getByTitle('Customer email preview').getAttribute('srcdoc')
-  expect(preview()).toContain('carcraft-logo.png')
+  expect(preview()).toContain('carcraft-email-logo.png')
   expect(preview()).not.toContain('$250.00')
   fireEvent.change(screen.getByLabelText('Your estimate'), {target:{value:'Refinish bumper for $300.'}})
   expect(preview()).toContain('Refinish bumper for $300.')

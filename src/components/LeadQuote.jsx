@@ -20,7 +20,7 @@ export default function LeadQuote({ lead }) {
   const [upper, setUpper] = useState(dollars(lead.quote?.maxAmountCents))
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [saved, setSaved] = useState(false)
+  const [saved, setSaved] = useState(Boolean(lead.quote))
 
   useEffect(() => {
     setAmount(dollars(lead.quote?.minAmountCents))
@@ -29,7 +29,7 @@ export default function LeadQuote({ lead }) {
 
   async function submit(event) {
     event.preventDefault()
-    if (saving) return
+    if (saving || saved) return
     setError('')
     setSaved(false)
     try {
@@ -48,22 +48,23 @@ export default function LeadQuote({ lead }) {
     }
   }
 
-  return <form className="lead-quote" aria-label={`Customer quote for ${lead.name}`} onSubmit={submit}>
+  return <form className="lead-quote" data-locked={saving || saved} aria-busy={saving} aria-label={`Customer quote for ${lead.name}`} onSubmit={submit}>
     <p className="lead-quote-summary"><strong>Internal quote: </strong>{lead.quote
       ? `${money.format(lead.quote.minAmountCents / 100)}${lead.quote.maxAmountCents === undefined ? '' : ` – ${money.format(lead.quote.maxAmountCents / 100)}`}`
       : 'Not recorded'}</p>
     <div className="lead-quote-fields">
       <label>Amount quoted ($)
         <input type="text" inputMode="decimal" required value={amount} placeholder="1500.00"
-          aria-describedby={helpId} disabled={saving || Boolean(lead.deletedAt)}
+          aria-describedby={helpId} disabled={saving || saved || Boolean(lead.deletedAt)}
           onChange={(event) => { setAmount(event.target.value); setSaved(false); setError('') }} />
       </label>
       <label>Upper amount ($, optional)
         <input type="text" inputMode="decimal" value={upper} placeholder="2000.00"
-          aria-describedby={helpId} disabled={saving || Boolean(lead.deletedAt)}
+          aria-describedby={helpId} disabled={saving || saved || Boolean(lead.deletedAt)}
           onChange={(event) => { setUpper(event.target.value); setSaved(false); setError('') }} />
       </label>
-      <button className="primary-btn small" type="submit" disabled={saving || Boolean(lead.deletedAt)}>{saving ? 'Saving…' : 'Save quote'}</button>
+      {saved ? <button className="ghost-btn small" type="button" disabled={Boolean(lead.deletedAt)} onClick={() => setSaved(false)}>Edit quote</button> :
+      <button className="primary-btn small" type="submit" disabled={saving || saved || Boolean(lead.deletedAt)}>{saving ? 'Saving…' : 'Save quote'}</button>}
     </div>
     <p className="muted lead-quote-help" id={helpId}>For shop records. Enter the quoted price in USD. For a range, add an upper amount.</p>
     {lead.quote?.updatedAt ? <p className="muted lead-quote-help">Last saved {new Date(lead.quote.updatedAt).toLocaleString()}</p> : null}

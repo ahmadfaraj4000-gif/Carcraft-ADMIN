@@ -39,3 +39,10 @@
   .estimate-email-dialog footer button {flex:1 1 100px}
   .mail-stage {margin-block:4px}
 }
+.estimate-leads .estimate-scheduling {grid-template-columns:repeat(3,minmax(0,1fr));gap:16px;align-items:start}
+.estimate-scheduling label {display:grid;grid-template-rows:auto 44px;align-content:start;gap:8px;min-width:0}
+.estimate-scheduling :is(input,select) {box-sizing:border-box;width:100%;min-width:0;height:44px;min-height:44px;margin:0;padding:0 12px}
+.estimate-leads .lead-quote[data-locked="true"] {background:#edf0f3;border-color:#c7cdd4}
+.lead-quote[data-locked="true"] input:disabled {background:#e1e5e9;color:#465262;opacity:1;cursor:default}
+.lead-pagination {display:flex;align-items:center;justify-content:center;gap:16px;margin:20px 0;flex-wrap:wrap}
+@media(max-width:650px){.estimate-leads .estimate-scheduling {grid-template-columns:1fr}}

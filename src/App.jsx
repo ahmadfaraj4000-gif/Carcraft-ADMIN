@@ -103,17 +103,17 @@ export default function App() {
   const [navCollapsed, setNavCollapsed] = useState(false)
   const searchableTabs = ['leads', 'appointments', 'customers', 'inventory']
 
-  const authenticatedArgs = isAuthenticated ? {} : 'skip'
-  const leads = useQuery(api.estimateLeads.listSummaries, authenticatedArgs) || []
-  const appointments = useQuery(api.appointments.list, authenticatedArgs) || []
-  const customers = useQuery(api.customers.list, authenticatedArgs) || []
-  const inventory = useQuery(api.inventory.list, authenticatedArgs) || []
+  const tabArgs = (...tabs) => isAuthenticated && tabs.includes(activeTab) ? {} : 'skip'
+  const leadCounts = useQuery(api.estimateLeads.dashboardCounts, tabArgs('dashboard'))
+  const appointments = useQuery(api.appointments.list, tabArgs('dashboard', 'appointments', 'calendar')) || []
+  const customers = useQuery(api.customers.list, tabArgs('customers')) || []
+  const inventory = useQuery(api.inventory.list, tabArgs('dashboard', 'inventory')) || []
   const deleteCustomer = useMutation(api.customers.remove)
 
   const title = navItems.find(([key]) => key === activeTab)?.[1] || 'Dashboard'
   const stats = useMemo(() => ({
-    newLeads: leads.filter((lead) => lead.status === 'new').length,
-    followUps: leads.filter((lead) => lead.status === 'follow_up_needed').length,
+    newLeads: leadCounts?.newLeads || 0,
+    followUps: leadCounts?.followUps || 0,
     bookedAppointments: appointments.filter((appt) => ['new_request', 'confirmed'].includes(appt.status)).length,
     carsInShop: appointments.filter((appt) => ['car_in_shop', 'waiting_on_parts'].includes(appt.status)).length,
     completedThisWeek: appointments.filter((appt) => {
@@ -129,7 +129,7 @@ export default function App() {
     soldVehicles: inventory.filter((car) => car.status === 'sold').length,
     featuredVehicles: inventory.filter((car) => car.featured).length,
     comingSoonVehicles: inventory.filter((car) => car.status === 'coming_soon').length
-  }), [appointments, inventory, leads])
+  }), [appointments, inventory, leadCounts])
 
   if (isLoading) return <div className="loading-screen">Loading Car Craft command center...</div>
   if (!isAuthenticated) return <Login />
@@ -184,7 +184,7 @@ export default function App() {
         </header>
 
         {activeTab === 'dashboard' ? <Dashboard stats={stats} setActiveTab={setActiveTab} /> : null}
-        {activeTab === 'leads' ? <EstimateLeads leads={leads} search={search} /> : null}
+        {activeTab === 'leads' ? <EstimateLeads search={search} /> : null}
         {activeTab === 'appointments' ? <Appointments appointments={appointments} search={search} /> : null}
         {activeTab === 'customers' ? <CustomerDatabase customers={customers} search={search} onDelete={(id) => deleteCustomer({ id })} /> : null}
         {activeTab === 'inventory' ? <InventoryManager vehicles={inventory} search={search} stats={stats} /> : null}

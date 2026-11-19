@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useEffect, useRef, useState } from 'react'
+import { useMutation, usePaginatedQuery, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import LeadQuote from './LeadQuote'
 import CustomerEmail from './CustomerEmail'
@@ -14,45 +14,42 @@ function statusLabel(value) {
   return String(value || 'new').replaceAll('_', ' ')
 }
 
-// An unopened archive never mounts this component, so it cannot fetch photos.
-function LeadPhotos({ lead, priority, onOpen }) {
-  const container = useRef(null)
-  const [visible, setVisible] = useState(priority)
-  const photos = useQuery(api.estimateLeads.getPhotos, visible ? { id: lead._id } : 'skip')
+const PAGE_SIZE = 12
+
+export default function EstimateLeads({ search = '' }) {
+  const [term, setTerm] = useState(search.trim().toLowerCase())
   useEffect(() => {
-    if (priority) { setVisible(true); return }
-    if (visible || !container.current) return
-    if (!('IntersectionObserver' in window)) { setVisible(true); return }
-    const observer = new IntersectionObserver(([entry]) => {
-      if (entry.isIntersecting) { setVisible(true); observer.disconnect() }
-    }, { rootMargin: '100px 0px' })
-    observer.observe(container.current)
-    return () => observer.disconnect()
-  }, [priority, visible])
-  if (!lead.photoCount) return null
-  return <div className="photo-row lead-photo-row" ref={container}>
-    {photos ? photos.slice(0, 4).map((photo, index) => (
-      <button className="photo-thumbnail-button" type="button" key={photo.storageId}
-        onClick={() => onOpen({ ...lead, photos }, index)}
-        aria-label={`Open damage photo ${index + 1} of ${photos.length} for ${lead.name}`}>
-        <img src={photo.thumbnailUrl || photo.url} width="82" height="62" decoding="async"
-          loading="eager" fetchpriority={priority ? 'high' : 'low'}
-          onError={(event) => { if (event.currentTarget.src !== photo.url) event.currentTarget.src = photo.url }}
-          alt={photo.name || `Vehicle damage photo ${index + 1}`} />
-      </button>
-    )) : <span className="photo-placeholder">{lead.photoCount} photo{lead.photoCount === 1 ? '' : 's'} · {visible ? 'Loading…' : 'Loads as you scroll'}</span>}
-  </div>
+    const timer = setTimeout(() => setTerm(search.trim().toLowerCase()), 180)
+    return () => clearTimeout(timer)
+  }, [search])
+  const [view, setView] = useState('active')
+  return <LeadBrowser key={view + ':' + term} view={view} setView={setView} term={term} />
 }
 
-export default function EstimateLeads({ leads = [], search = '' }) {
+function LeadBrowser({ view, setView, term }) {
+  const [requestedPage, setPage] = useState(0)
+  const listTop = useRef(null)
+  function goToPage(index) {
+    setPage(index)
+    listTop.current?.scrollIntoView?.({block: 'start'})
+  }
+  const {results, status, loadMore} = usePaginatedQuery(api.estimateLeads.summaryPage,
+    { archived: view === 'archived', search: term }, { initialNumItems: PAGE_SIZE + 1 })
+  const lastPage = Math.max(0, Math.ceil(results.length / PAGE_SIZE) - 1)
+  const page = status === 'Exhausted' ? Math.min(requestedPage, lastPage) : requestedPage
+  const end = (page + 1) * PAGE_SIZE
+  const rows = results.slice(page * PAGE_SIZE, end)
+  const loading = status !== 'Exhausted' && results.length <= end
+  useEffect(() => {
+    if (loading && status === 'CanLoadMore') loadMore(term ? 60 : PAGE_SIZE)
+    if (page !== requestedPage) setPage(page)
+  }, [loading, status, loadMore, term, page, requestedPage])
   const updateStatus = useMutation(api.estimateLeads.updateStatus)
   const addNote = useMutation(api.estimateLeads.addNote)
   const archiveLead = useMutation(api.estimateLeads.archiveLead)
   const deleteLead = useMutation(api.estimateLeads.deleteLead)
   const convertLead = useMutation(api.appointments.convertLead)
   const restoreLead = useMutation(api.estimateLeads.restoreLead)
-  const [view, setView] = useState('active')
-  const archivedLeads = useQuery(api.estimateLeads.listSummaries, view === 'archived' ? { archived: true } : 'skip')
   const [selectedId, setSelected] = useState(null)
   const selected = useQuery(api.estimateLeads.getDetails, selectedId ? { id: selectedId } : 'skip')
   const [actionError, setActionError] = useState('')
@@ -70,15 +67,6 @@ export default function EstimateLeads({ leads = [], search = '' }) {
   const [time, setTime] = useState('09:00')
   const [lightbox, setLightbox] = useState(null)
   const lightboxCloseRef = useRef(null)
-
-  const rows = useMemo(() => {
-    const term = search.trim().toLowerCase()
-    const source = view === 'archived' ? (archivedLeads || []) : leads
-    if (!term) return source
-    return source.filter((lead) => [
-      lead.name, lead.phone, lead.email, lead.vehicle, lead.status, lead.damageArea, lead.damageType
-    ].filter(Boolean).join(' ').toLowerCase().includes(term))
-  }, [leads, archivedLeads, view, search])
 
   useEffect(() => {
     if (!lightbox) return undefined
@@ -144,9 +132,9 @@ export default function EstimateLeads({ leads = [], search = '' }) {
         <button role="tab" aria-selected={view === 'archived'} className={view === 'archived' ? 'primary-btn' : 'ghost-btn'} onClick={() => setView('archived')}>Archive</button>
       </div>
       {actionError ? <div className="error-box" role="alert">{actionError}</div> : null}
-      {view === 'archived' ? <p className="muted">Archived photos load only when you open an estimate.</p> : null}
-      <div className="command-list">
-        {rows.map((lead, leadIndex) => (
+
+      <div className="command-list" ref={listTop} aria-busy={loading}>
+        {rows.map((lead) => (
           <article className={`command-card status-border-${lead.status}`} key={lead._id}>
             <div className="lead-card-content">
               <div className="command-topline">
@@ -161,11 +149,11 @@ export default function EstimateLeads({ leads = [], search = '' }) {
               </div>
               <p className="muted">{lead.phone} · {lead.email} · {lead.vehicle || 'Vehicle not listed'}</p>
               <p>{lead.damageArea} · {lead.damageType} · Severity: {lead.severity}</p>
-              {view === 'active' ? <LeadPhotos lead={lead} priority={leadIndex < 4} onOpen={openLightbox} /> : <p className="muted">{lead.photoCount} photos · Open to view</p>}
+              {lead.photoCount > 0 && <p className="muted">{lead.photoCount} {lead.photoCount === 1 ? 'photo' : 'photos'}</p>}
 
             </div>
             <div className="quick-actions">
-              <button className="ghost-btn small" disabled={Boolean(lead.deletedAt)} onClick={() => setSelected(lead._id)}>Open</button>
+              <button className="ghost-btn small" disabled={Boolean(lead.deletedAt)} onClick={() => setSelected(lead._id)}>Open estimate</button>
               {view === 'active' ? <>
                 <button className="ghost-btn small" disabled={busyId === lead._id} onClick={() => runAction(lead._id, () => updateStatus({ id: lead._id, status: 'contacted' }))}>Contacted</button>
                 <button className="primary-btn small" disabled={busyId === lead._id} onClick={() => runAction(lead._id, () => updateStatus({ id: lead._id, status: 'booked' }))}>Booked</button>
@@ -174,9 +162,15 @@ export default function EstimateLeads({ leads = [], search = '' }) {
             </div>
           </article>
         ))}
-        {!rows.length ? <div className="empty-command-card">{view === 'archived' && archivedLeads === undefined ? 'Loading archive…' : 'No estimate leads found.'}</div> : null}
+        {!rows.length ? <div className="empty-command-card">{loading ? 'Loading estimates…' : 'No estimate leads found.'}</div> : null}
       </div>
 
+      <nav aria-label="Estimate pages" className="lead-pagination">
+        <button className="ghost-btn" disabled={!page} onClick={() => goToPage(page - 1)}>Previous</button>
+        <span role="status">{loading ? 'Loading page ' : 'Page '}{page + 1}{status === 'Exhausted' ? ' of ' + (lastPage + 1) : ''}</span>
+        <button className="ghost-btn" disabled={loading || (status === 'Exhausted' && page === lastPage)} onClick={() => goToPage(page + 1)}>Next</button>
+      </nav>
+      {selectedId && selected === null && <div role="status">This estimate is no longer available. <button onClick={() => setSelected(null)}>Dismiss</button></div>}
       {selectedId && selected === undefined ? <div className="modal-backdrop"><div className="modal-card" role="status">Loading estimate… <button className="ghost-btn" onClick={() => setSelected(null)}>Close</button></div></div> : null}
       {selected ? (
         <div className="modal-backdrop" onClick={() => setSelected(null)}>
@@ -214,7 +208,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
             ))}</div>
             <CustomerEmail key={"email-" + selected._id} lead={selected} />
             <LeadQuote key={selected._id} lead={selected} />
-            <div className="form-grid">
+            <div className="form-grid estimate-scheduling">
               <label>Status<select value={selected.status} onChange={(e) => runAction(selected._id, () => updateStatus({ id: selected._id, status: e.target.value }))}>{statuses.map((status) => <option key={status}>{status}</option>)}</select></label>
               <label>Appointment Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
               <label>Appointment Time<input type="time" value={time} onChange={(e) => setTime(e.target.value)} /></label>

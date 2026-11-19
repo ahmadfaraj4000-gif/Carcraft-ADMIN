@@ -157,3 +157,18 @@ test.each([[201,'sent'],[429,'pending'],[503,'review'],[400,'failed']])('records
     expect(provider).toHaveBeenCalledTimes(2)
   } finally { provider.mockRestore() }
 })
+
+test('summary pages use cursors, preserve search, and omit detail data', async () => {
+  const {t, admin} = await setup()
+  for (let i=0; i<4; i++) {
+    await t.mutation(api.estimateLeads.startSubmission,{...details,name:'Page test '+i,submissionKey:'page-test-unique-key-'+i})
+  }
+  const args = {archived:false,search:'',paginationOpts:{numItems:2,cursor:null}}
+  await expect(t.query(api.estimateLeads.summaryPage,args)).rejects.toThrow('Admin')
+  const first = await admin.query(api.estimateLeads.summaryPage,args)
+  const next = await admin.query(api.estimateLeads.summaryPage,{...args,paginationOpts:{numItems:2,cursor:first.continueCursor}})
+  expect([...first.page,...next.page].map(row=>row.name)).toEqual(['Page test 3','Page test 2','Page test 1','Page test 0'])
+  for(const field of ['description','vin','quote','notes','photos','submissionKey']) expect(first.page[0]).not.toHaveProperty(field)
+  const filtered = await admin.query(api.estimateLeads.summaryPage,{...args,search:'test 1',paginationOpts:{numItems:10,cursor:null}})
+  expect(filtered.page.map(row=>row.name)).toEqual(['Page test 1'])
+})

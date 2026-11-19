@@ -1,5 +1,6 @@
 import { action, internalAction, internalMutation, internalQuery, mutation, query } from './_generated/server'
 import { v } from 'convex/values'
+import { paginationOptsValidator } from 'convex/server'
 import { internal } from './_generated/api'
 import { getAdminUserId, requireAdmin } from './lib/requireAdmin'
 
@@ -256,6 +257,45 @@ export const listSummaries = query({
       const { photos, notes, submissionKey, ...summary } = row
       return { ...summary, photoCount: photos.length }
     })
+  }
+})
+
+export const summaryPage = query({
+  args: { archived: v.boolean(), search: v.string(), paginationOpts: paginationOptsValidator },
+  handler: async (ctx, { archived, search, paginationOpts }) => {
+    await requireAdmin(ctx)
+    const batch = await ctx.db.query('estimateLeads')
+      .withIndex('by_archived', q => q.eq('archived', archived))
+      .order('desc').paginate(paginationOpts)
+    const term = search.trim().toLowerCase()
+    const page = batch.page.filter(row => {
+      if (!archived && row.deletedAt) return false
+      return !term || [row.name, row.phone, row.email, row.vehicle, row.status, row.damageArea, row.damageType]
+        .filter(Boolean).join(' ').toLowerCase().includes(term)
+    }).map(row => ({
+      _id: row._id, name: row.name, phone: row.phone, email: row.email, vehicle: row.vehicle,
+      status: row.status, damageArea: row.damageArea, damageType: row.damageType, severity: row.severity,
+      deletedAt: row.deletedAt, submissionState: row.submissionState, notificationStatus: row.notificationStatus,
+      rentalVehicleInterest: row.rentalVehicleInterest, towAssistanceInterest: row.towAssistanceInterest,
+      photoCount: row.photos.length
+    }))
+    return { ...batch, page }
+  }
+})
+
+export const dashboardCounts = query({
+  args: {},
+  handler: async ctx => {
+    await requireAdmin(ctx)
+    const count = async (status: 'new' | 'follow_up_needed') => {
+      let total = 0
+      for await (const row of ctx.db.query('estimateLeads').withIndex('by_status', q => q.eq('status', status))) {
+        if (!row.archived && !row.deletedAt) total++
+      }
+      return total
+    }
+    const [newLeads, followUps] = await Promise.all([count('new'), count('follow_up_needed')])
+    return { newLeads, followUps }
   }
 })
 

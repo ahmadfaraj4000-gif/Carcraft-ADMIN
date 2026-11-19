@@ -26,7 +26,7 @@ export function estimateEmail(input: {
     subject: title + ' | ' + shop,
     textContent: [shop, title, ...paragraphs, footer].join('\n\n'),
     htmlContent: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#f1f3f5;font:16px/1.6 Arial,sans-serif;color:#18212b">
-<table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:white"><tr><td style="padding:24px;border-bottom:5px solid #d52b1e"><img width="180" src="https://carcraftautobodytowing.com/assets/images/branding/carcraft-logo.png" alt="Car Craft Auto Body &amp; Towing"></td></tr>
+<table role="presentation" align="center" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:white"><tr><td align="center" bgcolor="#18212b" style="padding:12px 24px;background-color:#18212b;border-bottom:5px solid #d52b1e;text-align:center"><img width="220" style="display:inline-block;width:220px;max-width:100%;height:auto;vertical-align:middle;color:#fff" src="https://carcraftautobodytowing.com/assets/images/branding/carcraft-logo.png" alt="Car Craft Auto Body &amp; Towing"></td></tr>
 <tr><td style="padding:24px;overflow-wrap:anywhere"><h1 style="font-size:26px;line-height:1.2">${title}</h1>${paragraphs.map(p => '<p>' + escape(p).replace(/\n/g,'<br>') + '</p>').join('')}</td></tr>
 <tr><td style="padding:24px;background:#18212b;color:#fff"><strong>${escape(shop)}</strong><br>${address}<br>${hours}<br><a style="color:white" href="tel:8609531966">860-953-1966</a></td></tr></table></body></html>`
   }

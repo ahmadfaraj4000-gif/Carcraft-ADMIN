@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { useMutation, useQuery } from 'convex/react'
+import { useAction, useMutation, useQuery } from 'convex/react'
 import { api } from '../../convex/_generated/api'
 import { estimateEmail } from '../../shared/estimateEmail'
+import { attachedEstimateMessage, validatePdf } from '../../shared/estimateAttachment'
 import './customer-email.css'
 
 const labels = {
@@ -13,6 +14,11 @@ function Composer({ lead, enabled, close }) {
   const dialog = useRef(null)
   const [key] = useState(() => crypto.randomUUID())
   const [body, setBody] = useState('')
+  const [file, setFile] = useState(null)
+  const [fileError, setFileError] = useState('')
+  const picker = useRef(null)
+  const sendWithPdf = useAction(api.estimateEmails.sendWithPdf)
+  const message = body.trim() || (file ? attachedEstimateMessage : '')
   const [queued, setQueued] = useState(false)
   const doneButton = useRef(null)
   useEffect(() => { if (queued) doneButton.current?.focus() }, [queued])
@@ -25,14 +31,16 @@ function Composer({ lead, enabled, close }) {
     return () => modal.close()
   }, [])
   const preview = estimateEmail({ kind: 'estimate', name: lead.name, vehicle: lead.vehicle,
-    details: body.trim() || 'Your estimate details will appear here.' })
+    details: message || 'Your estimate details will appear here.' })
   async function submit(event) {
     event.preventDefault()
-    if (busy || !body.trim()) return
+    if (busy || fileError || !message) return
     setBusy(true)
     setError('')
     try {
-      await send({id: lead._id, recipient: lead.email, details: body.trim(), key})
+      const args = {id:lead._id, recipient:lead.email, details:message, key}
+      if (file) await sendWithPdf({...args, name:file.name, pdf:await file.arrayBuffer()})
+      else await send(args)
       setQueued(true)
       setBusy(false)
     } catch (err) {
@@ -51,15 +59,30 @@ function Composer({ lead, enabled, close }) {
       <div className="mail-columns"><div className="mail-editor">
         <p><strong>To</strong><br/>{lead.name} &lt;{lead.email}&gt;</p>
         <p><strong>Subject</strong><br/>{preview.subject}</p>
-        <label>Your estimate<textarea autoFocus required maxLength={10000} rows={8} value={body} disabled={busy}
+        <label>Your estimate<textarea autoFocus required={!file} maxLength={10000} rows={8} value={body} disabled={busy}
           onChange={e => setBody(e.target.value)} placeholder="Describe the repair, price, and next steps." /></label>
+        <div className="mail-attachment">
+          <input ref={picker} type="file" hidden accept=".pdf,application/pdf" aria-label="Estimate PDF" disabled={busy}
+            onChange={event => {
+              const picked = event.target.files?.[0]
+              event.target.value = ''
+              if (!picked) return
+              setError('')
+              try { validatePdf(picked.name, picked.size); setFile(picked); setFileError('') }
+              catch (err) { setFile(null); setFileError(err.message) }
+            }}/>
+          <button type="button" className="ghost-btn" disabled={busy} onClick={() => picker.current.click()}>{file ? 'Replace PDF' : 'Attach file'}</button>
+          {(file || fileError) && <button type="button" className="ghost-btn" disabled={busy} onClick={() => {setFile(null); setFileError(''); setError('')}}>Remove</button>}
+          <p role="status">{file ? 'Attached: ' + file.name : 'PDF · up to 10 MB'}</p>
+          {fileError && <p role="alert">{fileError}</p>}
+        </div>
       </div><section className="mail-preview"><h3>Customer preview</h3><iframe title="Customer email preview" sandbox="" srcDoc={preview.htmlContent}/></section></div>
       <footer>
         {error && <div className="mail-feedback" role="alert">Couldn’t confirm the send. Your draft is ready to retry. {error}</div>}
-        {busy && <div className="mail-feedback" role="status">Queueing your estimate for {lead.email}…</div>}
+        {busy && <div className="mail-feedback" role="status">{file ? 'Uploading PDF and queueing your estimate' : 'Queueing your estimate'} for {lead.email}…</div>}
         {!enabled && <div className="mail-feedback">Email sending is unavailable.</div>}
         <button type="button" className="ghost-btn" disabled={busy} onClick={() => close(false)}>Cancel</button>
-        <button className="primary-btn" disabled={busy || !enabled || !body.trim()}>{busy ? 'Queueing…' : 'Send email'}</button>
+        <button className="primary-btn" disabled={busy || !enabled || !!fileError || !message}>{busy ? 'Queueing…' : 'Send email'}</button>
       </footer>
     </form>}
   </dialog>
@@ -86,7 +109,7 @@ export default function CustomerEmail({ lead }) {
     {!history ? <p>Loading email history…</p> : !history.rows?.length ? <p>No emails recorded.</p> : history.rows.map(row =>
       <details key={row._id}><summary><strong>{row.kind === 'thanks' ? 'Thank-you email' : 'Estimate email'}</strong>
         <span className="mail-stage" data-stage={row.delivery || row.status} aria-live="polite">{labels[row.delivery || row.status]}</span><time>{new Date(row.deliveryAt || row._creationTime).toLocaleString()}</time></summary>
-        <p>To {row.email}</p><p className="mail-snapshot">{row.textContent}</p>
+        <p>To {row.email}</p>{row.attachmentName && <p>Attachment: {row.attachmentName}</p>}<p className="mail-snapshot">{row.textContent}</p>
         {row.status === 'failed' && <button className="ghost-btn" onClick={() => retry({id:row._id}).catch(err => setNotice(err.message))}>Retry email</button>}
       </details>)}
     {composing && <Composer lead={lead} enabled={history?.enabled} close={() => setComposing(false)}/>}

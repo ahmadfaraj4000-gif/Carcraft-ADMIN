@@ -9,11 +9,11 @@ export function emailEnabled(email: string) {
     (process.env.BREVO_ENABLED === 'true' || email.toLowerCase() === process.env.BREVO_TEST_INBOX?.toLowerCase()))
 }
 
-export async function enqueue(ctx: MutationCtx, lead: Recipient, kind: 'thanks' | 'estimate', key: string, message: ReturnType<typeof estimateEmail>) {
+export async function enqueue(ctx: MutationCtx, lead: Recipient, kind: 'thanks' | 'estimate', key: string, message: ReturnType<typeof estimateEmail>, attachment?: Doc<'emailDeliveries'>['attachment']) {
   const existing = await ctx.db.query('emailDeliveries').withIndex('by_key', q => q.eq('key', key)).unique()
   if (existing) return false
   const id = await ctx.db.insert('emailDeliveries', { leadId: lead._id, kind, key, email: lead.email, name: lead.name,
-    ...message, status: 'pending', attempts: 0, nextAttemptAt: Date.now() })
+    ...message, attachment, status: 'pending', attempts: 0, nextAttemptAt: Date.now() })
   await ctx.scheduler.runAfter(0, internal.estimateEmails.deliver, { id })
   return true
 }

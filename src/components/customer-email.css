@@ -46,3 +46,7 @@
 .lead-quote[data-locked="true"] input:disabled {background:#e1e5e9;color:#465262;opacity:1;cursor:default}
 .lead-pagination {display:flex;align-items:center;justify-content:center;gap:16px;margin:20px 0;flex-wrap:wrap}
 @media(max-width:650px){.estimate-leads .estimate-scheduling {grid-template-columns:1fr}}
+
+.mail-attachment {display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px}
+.mail-attachment p {flex-basis:100%;margin:0;overflow-wrap:anywhere}
+.mail-attachment [role="alert"] {color:#9a241b}

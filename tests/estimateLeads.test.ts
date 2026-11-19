@@ -172,3 +172,29 @@ test('summary pages use cursors, preserve search, and omit detail data', async (
   const filtered = await admin.query(api.estimateLeads.summaryPage,{...args,search:'test 1',paginationOpts:{numItems:10,cursor:null}})
   expect(filtered.page.map(row=>row.name)).toEqual(['Page test 1'])
 })
+
+test('PDF-only estimate preserves the filename and bytes through a duplicate submit and delivery', async () => {
+  enableTestEmail()
+  const {t,admin} = await setup()
+  const id = await t.mutation(internal.estimateLeads.create,{...details,photos:[]})
+  const pdf = new TextEncoder().encode('%PDF-1.4\n' + 'test payload '.repeat(4000) + '%%EOF').buffer
+  const args = {id,recipient:details.email,details:'',key:'attachment-test-key-123',name:'Repair estimate.pdf',pdf}
+  await expect(t.action(api.estimateEmails.sendWithPdf,args)).rejects.toThrow('Admin')
+  await expect(admin.action(api.estimateEmails.sendWithPdf,{...args,pdf:new ArrayBuffer(8)})).rejects.toThrow('valid PDF')
+  await admin.action(api.estimateEmails.sendWithPdf,args)
+  await admin.action(api.estimateEmails.sendWithPdf,args)
+  const rows = await t.run(ctx => ctx.db.query('emailDeliveries').collect())
+  expect(rows).toHaveLength(2)
+  expect(rows.find(r=>r.kind==='thanks')?.attachment).toBeUndefined()
+  const row = rows.find(r=>r.kind==='estimate')!
+  expect(row.textContent).toContain('attached as a PDF')
+  expect((await admin.query(api.estimateEmails.history,{id})).rows.find(r=>r.kind==='estimate')?.attachmentName).toBe(args.name)
+  const provider = vi.spyOn(globalThis,'fetch')
+    .mockResolvedValueOnce(Response.json({plan:[{type:'free',credits:300}]}))
+    .mockResolvedValueOnce(Response.json({messageId:'pdf-test'},{status:201}))
+  try {
+    await t.action(internal.estimateEmails.deliver,{id:row._id})
+    const payload=JSON.parse(String(provider.mock.calls[1][1]?.body))
+    expect(payload.attachment).toEqual([{name:args.name,content:Buffer.from(pdf).toString('base64')}])
+  } finally { provider.mockRestore() }
+})

@@ -1,9 +1,12 @@
-import { internalMutation, internalAction, query, mutation } from './_generated/server'
+import { action, internalQuery, internalMutation, internalAction, query, mutation, type MutationCtx } from './_generated/server'
 import { internal } from './_generated/api'
 import { v } from 'convex/values'
 import { requireAdmin } from './lib/requireAdmin'
 import { enqueue, emailEnabled } from './lib/emailQueue'
 import { estimateEmail, shop, inbox } from '../shared/estimateEmail'
+
+import { validatePdf, attachedEstimateMessage } from '../shared/estimateAttachment'
+import type { Doc, Id } from './_generated/dataModel'
 
 export const history = query({
   args: { id: v.id('estimateLeads') },
@@ -11,18 +14,51 @@ export const history = query({
     await requireAdmin(ctx)
     const lead = await ctx.db.get(id)
     const rows = await ctx.db.query('emailDeliveries').withIndex('by_lead', q => q.eq('leadId', id)).order('desc').collect()
-    return { enabled: !!lead && emailEnabled(lead.email), rows: rows.map(({_id, _creationTime, status, email, subject, textContent, errorCode, kind, delivery, deliveryAt}) => ({_id, _creationTime, status, email, subject, textContent, errorCode, kind, delivery, deliveryAt})) }
+    return { enabled: !!lead && emailEnabled(lead.email), rows: rows.map(({_id, _creationTime, status, email, subject, textContent, errorCode, kind, delivery, deliveryAt, attachment}) => ({_id, _creationTime, status, email, subject, textContent, errorCode, kind, delivery, deliveryAt, attachmentName:attachment?.name})) }
   }
 })
-export const send = mutation({
-  args: { id: v.id('estimateLeads'), recipient: v.string(), details: v.string(), key: v.string() },
-  handler: async (ctx, {id, recipient, details, key}) => {
-    await requireAdmin(ctx)
-    const lead = await ctx.db.get(id)
-    if (!lead || lead.deletedAt || lead.archived || lead.submissionState === 'pending_upload') throw new Error('Open a completed active request.')
-    if (recipient !== lead.email || !emailEnabled(recipient)) throw new Error('Check the recipient and email configuration.')
-    if (!details.trim() || details.length > 10000 || !/^[a-zA-Z0-9_-]{16,100}$/.test(key)) throw new Error('Enter the customer estimate.')
-    await enqueue(ctx, lead, 'estimate', id + ':' + key, estimateEmail({kind:'estimate', name:lead.name, vehicle:lead.vehicle, details:details.trim()}))
+const sendArgs = { id: v.id('estimateLeads'), recipient: v.string(), details: v.string(), key: v.string() }
+type SendArgs = {id: Id<'estimateLeads'>, recipient: string, details: string, key: string}
+
+async function queueEstimate(ctx: MutationCtx, {id, recipient, details, key}: SendArgs, attachment?: Doc<'emailDeliveries'>['attachment']) {
+  await requireAdmin(ctx)
+  const lead = await ctx.db.get(id)
+  if (!lead || lead.deletedAt || lead.archived || lead.submissionState === 'pending_upload') throw new Error('Open a completed active request.')
+  if (recipient !== lead.email || !emailEnabled(recipient)) throw new Error('Check the recipient and email configuration.')
+  const body = details.trim() || (attachment ? attachedEstimateMessage : '')
+  if (!body || body.length > 10000 || !/^[a-zA-Z0-9_-]{16,100}$/.test(key)) throw new Error('Enter the customer estimate.')
+  return enqueue(ctx, lead, 'estimate', id + ':' + key, estimateEmail({kind:'estimate', name:lead.name, vehicle:lead.vehicle, details:body}), attachment)
+}
+
+export const send = mutation({ args: sendArgs, handler: (ctx, args) => queueEstimate(ctx, args) })
+
+export const authorizeAttachment = internalQuery({args:{}, handler: ctx => requireAdmin(ctx)})
+export const queuePdf = internalMutation({
+  args: {...sendArgs, storageId:v.id('_storage'), name:v.string()},
+  handler: (ctx, {storageId,name,...args}) => queueEstimate(ctx, args, {storageId,name})
+})
+
+export const discardUnusedPdf = internalMutation({
+  args:{storageId:v.id('_storage'), key:v.string()},
+  handler: async (ctx, {storageId,key}) => {
+    const row = await ctx.db.query('emailDeliveries').withIndex('by_key', q => q.eq('key',key)).unique()
+    if (row?.attachment?.storageId !== storageId) await ctx.storage.delete(storageId)
+  }
+})
+
+export const sendWithPdf = action({
+  args: {...sendArgs, name:v.string(), pdf:v.bytes()},
+  handler: async (ctx, {name,pdf,...args}): Promise<void> => {
+    await ctx.runQuery(internal.estimateEmails.authorizeAttachment,{})
+    validatePdf(name,pdf.byteLength)
+    if (new TextDecoder().decode(pdf.slice(0,5)) !== '%PDF-') throw new Error('Choose a valid PDF document.')
+    const storageId = await ctx.storage.store(new Blob([pdf],{type:'application/pdf'}))
+    let added = false
+    try {
+      added = await ctx.runMutation(internal.estimateEmails.queuePdf,{...args,name,storageId})
+    } finally {
+      if (!added) await ctx.runMutation(internal.estimateEmails.discardUnusedPdf,{storageId,key:args.id + ':' + args.key})
+    }
   }
 })
 
@@ -191,6 +227,22 @@ export const deliver = internalAction({
       await record("pending", "account_check_unavailable");
       return;
     }
+    let attachment
+    if (row.attachment) {
+      try {
+        const file = await ctx.storage.get(row.attachment.storageId)
+        if (!file) throw new Error('Missing PDF')
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        // Multiples of three keep intermediate base64 chunks free of padding.
+        const chunks = []
+        for (let start = 0; start < bytes.length; start += 24576)
+          chunks.push(btoa(String.fromCharCode(...bytes.subarray(start, start + 24576))))
+        attachment = [{name:row.attachment.name, content:chunks.join('')}]
+      } catch {
+        await record('failed', 'pdf_attachment_unavailable')
+        return
+      }
+    }
     let response: Response;
     try {
       response = await fetch("https://api.brevo.com/v3/smtp/email", {
@@ -207,6 +259,7 @@ export const deliver = internalAction({
             email:
               process.env.BREVO_REPLY_TO_EMAIL || inbox,
           },
+          attachment,
           to: [{ email: row.email, name: row.name }],
           subject: row.subject, htmlContent: row.htmlContent, textContent: row.textContent,
           headers: { idempotencyKey: row._id },

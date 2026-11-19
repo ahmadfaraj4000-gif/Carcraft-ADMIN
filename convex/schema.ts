@@ -57,6 +57,7 @@ export default defineSchema({
     updatedAt: v.number()
   }).index('by_user', ['userId']),
   emailDeliveries: defineTable({
+    attachment: v.optional(v.object({ storageId: v.id('_storage'), name: v.string() })),
     leadId: v.id("estimateLeads"),
     kind: v.union(v.literal("thanks"), v.literal("estimate")),
     key: v.string(),

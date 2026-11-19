@@ -5,7 +5,7 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import CustomerEmail from '../src/components/CustomerEmail'
 import LeadQuote from '../src/components/LeadQuote'
 const { saveQuote } = vi.hoisted(() => ({ saveQuote: vi.fn() }))
-vi.mock('convex/react', () => ({ useMutation: () => saveQuote, useQuery: () => ({enabled: true, rows: []}) }))
+vi.mock('convex/react', () => ({ useAction: () => saveQuote, useMutation: () => saveQuote, useQuery: () => ({enabled: true, rows: []}) }))
 const lead = { _id: 'lead-1', name: 'Test customer' }
 beforeEach(() => { saveQuote.mockReset().mockResolvedValue({}) })
 afterEach(cleanup)
@@ -85,4 +85,23 @@ test('opens a separate popup with a live preview independent of the internal quo
   expect(screen.getByRole('status').textContent).toContain('shop@example.com')
   expect(screen.getByRole('button', {name:'Back to email history'})).toBe(document.activeElement)
   expect(saveQuote).toHaveBeenCalledWith({id:lead._id, key:expect.any(String),recipient:'shop@example.com',details:'Refinish bumper for $300.'})
+})
+
+test('can attach, remove and send a PDF estimate with the prefilled message', async () => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open','') }
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
+  render(<CustomerEmail lead={{ ...lead, email:'shop@example.com' }} />)
+  fireEvent.click(screen.getByRole('button',{name:'Send estimate email'}))
+  const file = new File(['%PDF-1.4'],'Estimate.pdf',{type:'application/pdf'})
+  const pdf = new ArrayBuffer(file.size)
+  file.arrayBuffer = async () => pdf
+  const select = () => fireEvent.change(screen.getByLabelText('Estimate PDF'),{target:{files:[file]}})
+  select()
+  expect(screen.getByText('Attached: Estimate.pdf')).toBeTruthy()
+  expect(screen.getByTitle('Customer email preview').getAttribute('srcdoc')).toContain('attached as a PDF')
+  fireEvent.click(screen.getByRole('button',{name:'Remove'}))
+  expect(screen.getByRole('button',{name:'Send email'}).disabled).toBe(true)
+  select()
+  await act(async () => fireEvent.click(screen.getByRole('button',{name:'Send email'})))
+  expect(saveQuote).toHaveBeenCalledWith(expect.objectContaining({name:file.name,pdf,recipient:'shop@example.com'}))
 })

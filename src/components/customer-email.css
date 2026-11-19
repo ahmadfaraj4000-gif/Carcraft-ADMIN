@@ -50,3 +50,7 @@
 .mail-attachment {display:flex;align-items:center;flex-wrap:wrap;gap:12px;margin-top:18px}
 .mail-attachment p {flex-basis:100%;margin:0;overflow-wrap:anywhere}
 .mail-attachment [role="alert"] {color:#9a241b}
+
+.mail-template {display:grid;justify-items:start;gap:6px;margin-top:14px}
+.mail-template span {color:var(--muted);font-size:.85rem;font-weight:600}
+.mail-template button {text-align:left;white-space:normal}

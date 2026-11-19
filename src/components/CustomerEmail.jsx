@@ -5,6 +5,8 @@ import { estimateEmail } from '../../shared/estimateEmail'
 import { attachedEstimateMessage, validatePdf } from '../../shared/estimateAttachment'
 import './customer-email.css'
 
+const preliminaryEstimateText = 'Attached is your preliminary estimate.'
+
 const labels = {
   pending: 'Queued', sending: 'Sending', sent: 'Accepted by Brevo', failed: 'Send failed',
   review: 'Delivery uncertain', delivered: 'Delivered', bounced: 'Bounced', blocked: 'Blocked'
@@ -14,6 +16,8 @@ function Composer({ lead, enabled, close }) {
   const dialog = useRef(null)
   const [key] = useState(() => crypto.randomUUID())
   const [body, setBody] = useState('')
+  const editor = useRef(null)
+  const draftWithTemplate = body.trim() ? body.trimEnd() + '\n\n' + preliminaryEstimateText : preliminaryEstimateText
   const [file, setFile] = useState(null)
   const [fileError, setFileError] = useState('')
   const picker = useRef(null)
@@ -59,8 +63,13 @@ function Composer({ lead, enabled, close }) {
       <div className="mail-columns"><div className="mail-editor">
         <p><strong>To</strong><br/>{lead.name} &lt;{lead.email}&gt;</p>
         <p><strong>Subject</strong><br/>{preview.subject}</p>
-        <label>Your estimate<textarea autoFocus required={!file} maxLength={10000} rows={8} value={body} disabled={busy}
+        <label>Your estimate<textarea ref={editor} autoFocus required={!file} maxLength={10000} rows={8} value={body} disabled={busy}
           onChange={e => setBody(e.target.value)} placeholder="Describe the repair, price, and next steps." /></label>
+        <div className="mail-template">
+          <span>Quick text</span>
+          <button type="button" className="ghost-btn" disabled={busy || body.includes(preliminaryEstimateText) || draftWithTemplate.length > 10000}
+            onClick={() => { setBody(draftWithTemplate); editor.current?.focus() }}>{preliminaryEstimateText}</button>
+        </div>
         <div className="mail-attachment">
           <input ref={picker} type="file" hidden accept=".pdf,application/pdf" aria-label="Estimate PDF" disabled={busy}
             onChange={event => {

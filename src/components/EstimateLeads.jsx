@@ -138,7 +138,7 @@ export default function EstimateLeads({ leads = [], search = '' }) {
   }
 
   return (
-    <section className="module">
+    <section className="module estimate-leads">
       <div className="lead-tabs" role="tablist" aria-label="Estimate lead views">
         <button role="tab" aria-selected={view === 'active'} className={view === 'active' ? 'primary-btn' : 'ghost-btn'} onClick={() => setView('active')}>Active Leads</button>
         <button role="tab" aria-selected={view === 'archived'} className={view === 'archived' ? 'primary-btn' : 'ghost-btn'} onClick={() => setView('archived')}>Archive</button>

@@ -17,3 +17,25 @@
 .mail-preview {background:#f2f4f6}
 .mail-preview iframe {display:block;width:100%;height:clamp(320px,56vh,620px);margin-top:10px;border:1px solid #dde2e6;border-radius:6px;background:white}
 @media(max-width:700px){.mail-columns{grid-template-columns:1fr}.mail-editor,.mail-preview{padding:16px}.estimate-email-dialog footer{position:sticky;bottom:0}.lead-email-history time{display:block;margin:4px 0}}
+
+.estimate-leads .command-card {gap:24px;flex-wrap:wrap}
+.estimate-leads .lead-card-content {min-width:0;overflow-wrap:anywhere}
+.estimate-leads .quick-actions,.estimate-leads .modal-actions,.estimate-leads .lead-tabs,.estimate-leads .lead-quote-fields {gap:16px}
+.estimate-leads .modal-actions {justify-content:flex-start;margin-top:20px;padding-top:20px;border-top:1px solid var(--border)}
+.estimate-leads button:not(.photo-grid-button):not(.photo-preview-button),.estimate-email-dialog button {min-height:44px}
+.lead-email-history header {flex-wrap:wrap;row-gap:16px}
+.lead-email-history summary {padding:14px 0;line-height:1.8}
+.mail-stage {display:inline-block;padding:2px 10px;border-radius:20px;background:#edf1f5;color:#344354;font-size:.875rem}
+.mail-stage[data-stage="delivered"] {background:#dcfce7;color:#166534}
+.mail-stage:is([data-stage="failed"],[data-stage="blocked"],[data-stage="bounced"],[data-stage="review"]) {background:#fff1e8;color:#893c16}
+.estimate-email-dialog footer {flex-wrap:wrap;gap:16px;padding-block:20px}
+.mail-feedback {flex-basis:100%;overflow-wrap:anywhere}
+.mail-feedback[role="alert"] {color:#9a241b}
+.estimate-email-dialog.is-confirmed {width:min(480px,94vw)}
+.mail-confirmation {padding:clamp(24px,4vw,36px);border-top:4px solid #15803d}
+.mail-confirmation p {margin:12px 0 24px;line-height:1.6;overflow-wrap:anywhere}
+@media(max-width:600px){
+  .estimate-leads .quick-actions,.estimate-leads .modal-actions {display:grid;grid-template-columns:repeat(auto-fit,minmax(min(138px,100%),1fr));width:100%}
+  .estimate-email-dialog footer button {flex:1 1 100px}
+  .mail-stage {margin-block:4px}
+}

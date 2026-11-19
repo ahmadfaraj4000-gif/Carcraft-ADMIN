@@ -79,5 +79,7 @@ test('opens a separate popup with a live preview independent of the internal quo
   fireEvent.change(screen.getByLabelText('Your estimate'), {target:{value:'Refinish bumper for $300.'}})
   expect(preview()).toContain('Refinish bumper for $300.')
   await act(async () => fireEvent.click(screen.getByRole('button', {name:'Send email'})))
+  expect(screen.getByRole('status').textContent).toContain('shop@example.com')
+  expect(screen.getByRole('button', {name:'Back to email history'})).toBe(document.activeElement)
   expect(saveQuote).toHaveBeenCalledWith({id:lead._id, key:expect.any(String),recipient:'shop@example.com',details:'Refinish bumper for $300.'})
 })

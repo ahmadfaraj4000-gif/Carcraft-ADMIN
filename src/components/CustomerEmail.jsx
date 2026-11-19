@@ -13,6 +13,9 @@ function Composer({ lead, enabled, close }) {
   const dialog = useRef(null)
   const [key] = useState(() => crypto.randomUUID())
   const [body, setBody] = useState('')
+  const [queued, setQueued] = useState(false)
+  const doneButton = useRef(null)
+  useEffect(() => { if (queued) doneButton.current?.focus() }, [queued])
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const send = useMutation(api.estimateEmails.send)
@@ -30,27 +33,35 @@ function Composer({ lead, enabled, close }) {
     setError('')
     try {
       await send({id: lead._id, recipient: lead.email, details: body.trim(), key})
-      close(true)
+      setQueued(true)
+      setBusy(false)
     } catch (err) {
       setError(err.message)
       setBusy(false)
     }
   }
-  return <dialog className="estimate-email-dialog" aria-labelledby="estimate-email-title" ref={dialog}
+  return <dialog className={"estimate-email-dialog" + (queued ? " is-confirmed" : "")} aria-labelledby="estimate-email-title" ref={dialog}
     onCancel={event => {event.preventDefault(); if (!busy) close(false)}}>
-    <form onSubmit={submit}>
+    {queued ? <section className="mail-confirmation">
+      <div role="status"><h2 id="estimate-email-title">Estimate email queued</h2>
+        <p>Your estimate for <strong>{lead.email}</strong> is queued for delivery. Email history will show when it arrives.</p></div>
+      <button ref={doneButton} className="primary-btn" onClick={close}>Back to email history</button>
+    </section> : <form onSubmit={submit}>
       <header><h2 id="estimate-email-title">Send estimate email</h2><button type="button" className="ghost-btn" disabled={busy} onClick={() => close(false)}>Close</button></header>
       <div className="mail-columns"><div className="mail-editor">
         <p><strong>To</strong><br/>{lead.name} &lt;{lead.email}&gt;</p>
         <p><strong>Subject</strong><br/>{preview.subject}</p>
-        <label>Your estimate<textarea autoFocus required maxLength={10000} rows={8} value={body}
+        <label>Your estimate<textarea autoFocus required maxLength={10000} rows={8} value={body} disabled={busy}
           onChange={e => setBody(e.target.value)} placeholder="Describe the repair, price, and next steps." /></label>
       </div><section className="mail-preview"><h3>Customer preview</h3><iframe title="Customer email preview" sandbox="" srcDoc={preview.htmlContent}/></section></div>
-      <footer>{error && <span role="alert">{error}</span>}{!enabled && <span>Email sending is unavailable.</span>}
+      <footer>
+        {error && <div className="mail-feedback" role="alert">Couldn’t confirm the send. Your draft is ready to retry. {error}</div>}
+        {busy && <div className="mail-feedback" role="status">Queueing your estimate for {lead.email}…</div>}
+        {!enabled && <div className="mail-feedback">Email sending is unavailable.</div>}
         <button type="button" className="ghost-btn" disabled={busy} onClick={() => close(false)}>Cancel</button>
         <button className="primary-btn" disabled={busy || !enabled || !body.trim()}>{busy ? 'Queueing…' : 'Send email'}</button>
       </footer>
-    </form>
+    </form>}
   </dialog>
 }
 
@@ -74,10 +85,10 @@ export default function CustomerEmail({ lead }) {
     {notice && <p role="status">{notice}</p>}
     {!history ? <p>Loading email history…</p> : !history.rows?.length ? <p>No emails recorded.</p> : history.rows.map(row =>
       <details key={row._id}><summary><strong>{row.kind === 'thanks' ? 'Thank-you email' : 'Estimate email'}</strong>
-        <span>{labels[row.delivery || row.status]}</span><time>{new Date(row.deliveryAt || row._creationTime).toLocaleString()}</time></summary>
+        <span className="mail-stage" data-stage={row.delivery || row.status} aria-live="polite">{labels[row.delivery || row.status]}</span><time>{new Date(row.deliveryAt || row._creationTime).toLocaleString()}</time></summary>
         <p>To {row.email}</p><p className="mail-snapshot">{row.textContent}</p>
         {row.status === 'failed' && <button className="ghost-btn" onClick={() => retry({id:row._id}).catch(err => setNotice(err.message))}>Retry email</button>}
       </details>)}
-    {composing && <Composer lead={lead} enabled={history?.enabled} close={sent => {setComposing(false); if (sent) setNotice('Estimate email queued.')}}/>}
+    {composing && <Composer lead={lead} enabled={history?.enabled} close={() => setComposing(false)}/>}
   </section>
 }

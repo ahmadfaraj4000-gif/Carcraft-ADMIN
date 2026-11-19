@@ -5,7 +5,7 @@ import { estimateEmail } from '../../shared/estimateEmail'
 import { attachedEstimateMessage, validatePdf } from '../../shared/estimateAttachment'
 import './customer-email.css'
 
-const preliminaryEstimateText = 'Attached is your preliminary estimate.'
+const preliminaryEstimateText = 'Attached is your preliminary estimate for your repair.'
 
 const labels = {
   pending: 'Queued', sending: 'Sending', sent: 'Accepted by Brevo', failed: 'Send failed',

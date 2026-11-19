@@ -2,8 +2,8 @@ import { internalMutation, internalAction, query, mutation } from './_generated/
 import { internal } from './_generated/api'
 import { v } from 'convex/values'
 import { requireAdmin } from './lib/requireAdmin'
-import { emailEnabled } from './lib/emailQueue'
-import { shop, inbox } from '../shared/estimateEmail'
+import { enqueue, emailEnabled } from './lib/emailQueue'
+import { estimateEmail, shop, inbox } from '../shared/estimateEmail'
 
 export const history = query({
   args: { id: v.id('estimateLeads') },
@@ -11,9 +11,61 @@ export const history = query({
     await requireAdmin(ctx)
     const lead = await ctx.db.get(id)
     const rows = await ctx.db.query('emailDeliveries').withIndex('by_lead', q => q.eq('leadId', id)).order('desc').collect()
-    return { enabled: !!lead && emailEnabled(lead.email), rows: rows.map(({_id, _creationTime, status, email, subject, textContent, errorCode}) => ({_id, _creationTime, status, email, subject, textContent, errorCode})) }
+    return { enabled: !!lead && emailEnabled(lead.email), rows: rows.map(({_id, _creationTime, status, email, subject, textContent, errorCode, kind, delivery, deliveryAt}) => ({_id, _creationTime, status, email, subject, textContent, errorCode, kind, delivery, deliveryAt})) }
   }
 })
+export const send = mutation({
+  args: { id: v.id('estimateLeads'), recipient: v.string(), details: v.string(), key: v.string() },
+  handler: async (ctx, {id, recipient, details, key}) => {
+    await requireAdmin(ctx)
+    const lead = await ctx.db.get(id)
+    if (!lead || lead.deletedAt || lead.archived || lead.submissionState === 'pending_upload') throw new Error('Open a completed active request.')
+    if (recipient !== lead.email || !emailEnabled(recipient)) throw new Error('Check the recipient and email configuration.')
+    if (!details.trim() || details.length > 10000 || !/^[a-zA-Z0-9_-]{16,100}$/.test(key)) throw new Error('Enter the customer estimate.')
+    await enqueue(ctx, lead, 'estimate', id + ':' + key, estimateEmail({kind:'estimate', name:lead.name, vehicle:lead.vehicle, details:details.trim()}))
+  }
+})
+
+export const refreshHistory = mutation({
+  args: { id: v.id('estimateLeads') },
+  handler: async (ctx, {id}) => {
+    await requireAdmin(ctx)
+    const rows = await ctx.db.query('emailDeliveries').withIndex('by_lead', q => q.eq('leadId', id)).collect()
+    for (const row of rows) {
+      if (row.status !== 'sent' || !row.messageId || row.delivery || Date.now() - (row.checkedAt || 0) < 15000) continue
+      await ctx.db.patch(row._id, {checkedAt: Date.now()})
+      await ctx.scheduler.runAfter(0, internal.estimateEmails.checkDelivery, {id:row._id,messageId:row.messageId})
+    }
+  }
+})
+
+export const checkDelivery = internalAction({
+  args: { id: v.id('emailDeliveries'), messageId: v.string() },
+  handler: async (ctx, {id,messageId}) => {
+    const params = new URLSearchParams({messageId, days:'90', limit:'50'})
+    const response = await fetch('https://api.brevo.com/v3/smtp/statistics/events?' + params, {
+      headers: {'api-key': process.env.BREVO_API_KEY!}, signal: AbortSignal.timeout(15000)
+    })
+    if (!response.ok) throw new Error('Brevo delivery lookup returned ' + response.status)
+    const data = await response.json()
+    const outcomes: Record<string,'delivered'|'blocked'|'bounced'> = {delivered:'delivered',blocked:'blocked',invalid:'blocked',hardBounces:'bounced',hardBounce:'bounced'}
+    for (const event of data.events || []) {
+      const delivery = outcomes[event.event]
+      if (event.messageId !== messageId || !delivery) continue
+      await ctx.runMutation(internal.estimateEmails.recordDelivery, {id,messageId,delivery,deliveryAt:Date.parse(event.date)})
+      break
+    }
+  }
+})
+
+export const recordDelivery = internalMutation({
+  args: {id:v.id('emailDeliveries'), messageId:v.string(), delivery:v.union(v.literal('delivered'),v.literal('blocked'),v.literal('bounced')), deliveryAt:v.number()},
+  handler: async (ctx, {id,messageId,delivery,deliveryAt}) => {
+    const row = await ctx.db.get(id)
+    if (row?.messageId === messageId) await ctx.db.patch(id, {delivery,deliveryAt})
+  }
+})
+
 export const retry = mutation({
   args: { id: v.id('emailDeliveries') },
   handler: async (ctx, { id }) => {
@@ -80,6 +132,7 @@ export const recordResult = internalMutation({
       sentAt: args.status === "sent" ? Date.now() : undefined,
       nextAttemptAt: Date.now() + 3600000,
     });
+    if (args.status === "sent" && args.messageId) await ctx.scheduler.runAfter(60000, internal.estimateEmails.checkDelivery, {id:args.id, messageId:args.messageId});
 
   },
 });

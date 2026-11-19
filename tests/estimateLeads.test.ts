@@ -132,15 +132,16 @@ test('one receipt per finalized request and one immutable message per admin send
   const quote = {id:leadId,minAmountCents:45000,maxAmountCents:55000}
   await admin.mutation(api.estimateLeads.saveQuote, quote)
   expect((await history()).rows).toHaveLength(1)
-  const email = {key:'repair-estimate-test-123',recipient:details.email,name:details.name,vehicle:'2020 Test Vehicle',details:'Repair <bumper>.'}
-  await expect(t.mutation(api.estimateLeads.saveQuote,{...quote,email})).rejects.toThrow('Admin')
-  await admin.mutation(api.estimateLeads.saveQuote,{...quote,email})
-  await admin.mutation(api.estimateLeads.saveQuote,{...quote,email})
+  const email = {key:'repair-estimate-test-123',recipient:details.email,id:leadId,details:'Repair <bumper>.'}
+  await expect(t.mutation(api.estimateEmails.send,email)).rejects.toThrow('Admin')
+  await admin.mutation(api.estimateEmails.send,email)
+  await admin.mutation(api.estimateEmails.send,email)
   await admin.mutation(api.estimateLeads.saveQuote,{id:leadId,minAmountCents:70000})
   expect((await history()).rows).toHaveLength(2)
   const row = await t.run(ctx => ctx.db.query('emailDeliveries').filter(q=>q.eq(q.field('kind'),'estimate')).unique())
   expect(row?.htmlContent).toContain('Repair &lt;bumper&gt;.')
-  expect(row?.textContent).toContain('$450.00 – $550.00')
+  expect(row?.textContent).not.toContain('$450.00')
+  expect(row?.textContent).not.toContain('Estimated repair cost:')
 })
 test.each([[201,'sent'],[429,'pending'],[503,'review'],[400,'failed']])('records provider response %s as %s', async (code,status) => {
   enableTestEmail()

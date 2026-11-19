@@ -2,6 +2,7 @@
 import React from 'react'
 import { cleanup, render, screen, fireEvent, act } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
+import CustomerEmail from '../src/components/CustomerEmail'
 import LeadQuote from '../src/components/LeadQuote'
 const { saveQuote } = vi.hoisted(() => ({ saveQuote: vi.fn() }))
 vi.mock('convex/react', () => ({ useMutation: () => saveQuote, useQuery: () => ({enabled: true, rows: []}) }))
@@ -66,14 +67,17 @@ test('disables inputs during saving and preserves the draft on failure for retry
   await submit()
   expect(screen.getByRole('status').textContent).toBe('Quote saved.')
 })
-test('previews the saved price and customer-facing details before sending', async () => {
-  render(<LeadQuote lead={{ ...lead, email:'shop@example.com', vehicle:'Test sedan', quote:{minAmountCents:25000} }} />)
-  fireEvent.click(screen.getByRole('button', {name:'Send estimate'}))
-  fireEvent.change(screen.getByLabelText('Estimate details'), {target:{value:'Refinish bumper.'}})
-  const preview = screen.getByTitle('Customer email preview').getAttribute('srcdoc')
-  expect(preview).toContain('$250.00')
-  expect(preview).toContain('Refinish bumper.')
-  expect(preview).toContain('Test sedan')
-  await submit()
-  expect(saveQuote).toHaveBeenCalledWith(expect.objectContaining({minAmountCents:25000, email:expect.objectContaining({recipient:'shop@example.com',details:'Refinish bumper.'})}))
+test('opens a separate popup with a live preview independent of the internal quote', async () => {
+  HTMLDialogElement.prototype.showModal = function () { this.setAttribute('open','') }
+  HTMLDialogElement.prototype.close = function () { this.removeAttribute('open') }
+  render(<CustomerEmail lead={{ ...lead, email:'shop@example.com', vehicle:'Test sedan', quote:{minAmountCents:25000} }} />)
+  fireEvent.click(screen.getByRole('button', {name:'Send estimate email'}))
+  expect(screen.getByRole('dialog')).toBeTruthy()
+  const preview = () => screen.getByTitle('Customer email preview').getAttribute('srcdoc')
+  expect(preview()).toContain('carcraft-logo.png')
+  expect(preview()).not.toContain('$250.00')
+  fireEvent.change(screen.getByLabelText('Your estimate'), {target:{value:'Refinish bumper for $300.'}})
+  expect(preview()).toContain('Refinish bumper for $300.')
+  await act(async () => fireEvent.click(screen.getByRole('button', {name:'Send email'})))
+  expect(saveQuote).toHaveBeenCalledWith({id:lead._id, key:expect.any(String),recipient:'shop@example.com',details:'Refinish bumper for $300.'})
 })

@@ -74,6 +74,9 @@ export default defineSchema({
     sentAt: v.optional(v.number()),
     errorCode: v.optional(v.string()),
     messageId: v.optional(v.string()),
+    delivery: v.optional(v.union(v.literal("delivered"), v.literal("bounced"), v.literal("blocked"))),
+    deliveryAt: v.optional(v.number()),
+    checkedAt: v.optional(v.number()),
   })
     .index("by_key", ["key"])
     .index("by_lead", ["leadId"])

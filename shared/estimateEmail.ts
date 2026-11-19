@@ -1,21 +1,17 @@
 export const shop = 'Car Craft Auto Body & Towing'
 export const inbox = 'carcraftllcauto@gmail.com'
-const money = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' })
 const escape = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
 
 export function estimateEmail(input: {
   kind: 'thanks' | 'estimate', name: string, vehicle?: string, details?: string,
-  minAmountCents?: number, maxAmountCents?: number
 }) {
   const thanks = input.kind === 'thanks'
   const title = thanks ? 'We received your estimate request' : 'Your repair estimate'
   const vehicle = input.vehicle ? ' for your ' + input.vehicle : ''
-  const amount = input.minAmountCents === undefined ? '' : money.format(input.minAmountCents / 100)
-  const range = input.maxAmountCents === undefined ? amount : amount + ' – ' + money.format(input.maxAmountCents / 100)
   const paragraphs = [
     'Hi ' + input.name + ',',
     thanks ? 'Thank you for sending your repair request' + vehicle + '. Our team will review the details and email your estimate.' : 'Here is our repair estimate' + vehicle + '.',
-    ...(thanks ? [] : ['Estimated repair cost: ' + range, input.details || '']),
+    ...(thanks ? [] : [input.details || '']),
     thanks ? 'You can reply to this email if you have questions or would like to add anything.' : 'Reply to this email or call us to discuss the repair and next steps.',
     'The Car Craft team'
   ]

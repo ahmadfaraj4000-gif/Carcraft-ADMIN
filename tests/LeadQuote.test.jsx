@@ -4,9 +4,9 @@ import { cleanup, render, screen, fireEvent, act } from '@testing-library/react'
 import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import LeadQuote from '../src/components/LeadQuote'
 const { saveQuote } = vi.hoisted(() => ({ saveQuote: vi.fn() }))
-vi.mock('convex/react', () => ({ useMutation: () => saveQuote }))
+vi.mock('convex/react', () => ({ useMutation: () => saveQuote, useQuery: () => ({enabled: true, rows: []}) }))
 const lead = { _id: 'lead-1', name: 'Test customer' }
-beforeEach(() => saveQuote.mockReset().mockResolvedValue({}))
+beforeEach(() => { saveQuote.mockReset().mockResolvedValue({}) })
 afterEach(cleanup)
 const amount = () => screen.getByLabelText('Amount quoted ($)')
 const upper = () => screen.getByLabelText('Upper amount ($, optional)')
@@ -65,4 +65,15 @@ test('disables inputs during saving and preserves the draft on failure for retry
   expect(amount().disabled).toBe(false)
   await submit()
   expect(screen.getByRole('status').textContent).toBe('Quote saved.')
+})
+test('previews the saved price and customer-facing details before sending', async () => {
+  render(<LeadQuote lead={{ ...lead, email:'shop@example.com', vehicle:'Test sedan', quote:{minAmountCents:25000} }} />)
+  fireEvent.click(screen.getByRole('button', {name:'Send estimate'}))
+  fireEvent.change(screen.getByLabelText('Estimate details'), {target:{value:'Refinish bumper.'}})
+  const preview = screen.getByTitle('Customer email preview').getAttribute('srcdoc')
+  expect(preview).toContain('$250.00')
+  expect(preview).toContain('Refinish bumper.')
+  expect(preview).toContain('Test sedan')
+  await submit()
+  expect(saveQuote).toHaveBeenCalledWith(expect.objectContaining({minAmountCents:25000, email:expect.objectContaining({recipient:'shop@example.com',details:'Refinish bumper.'})}))
 })

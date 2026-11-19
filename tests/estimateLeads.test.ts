@@ -60,11 +60,11 @@ test('archive is excluded from active summaries, supports restore, and protects 
   await admin.mutation(api.estimateLeads.restoreLead, { id: leadId })
   expect(await admin.query(api.estimateLeads.listSummaries, {})).toHaveLength(1)
 })
-test('invalid submission keys and empty submissions cannot be finalized', async () => {
+test('zero photos are supported and the correct submission key is required', async () => {
   const { t } = await setup()
   const { leadId } = await t.mutation(api.estimateLeads.startSubmission, { ...details, submissionKey: 'test-validation-123456' })
   await expect(t.mutation(api.estimateLeads.finalizeSubmission, { leadId, submissionKey: 'different-key-123456' })).rejects.toThrow('not found')
-  await expect(t.mutation(api.estimateLeads.finalizeSubmission, { leadId, submissionKey: 'test-validation-123456' })).rejects.toThrow('between one and eight')
+  await t.mutation(api.estimateLeads.finalizeSubmission, { leadId, submissionKey: 'test-validation-123456' })
 })
 
 test('quotes persist with photos, admin attribution, revisions, and archive/restore', async () => {
@@ -112,4 +112,47 @@ test('invalid amounts and reversed ranges cannot overwrite a saved quote', async
     await expect(admin.mutation(api.estimateLeads.saveQuote, { id: leadId, ...amounts })).rejects.toThrow()
   }
   expect((await admin.query(api.estimateLeads.getDetails, { id: leadId })).quote.minAmountCents).toBe(0)
+})
+
+function enableTestEmail() {
+  vi.stubEnv('BREVO_TEST_INBOX', details.email)
+  vi.stubEnv('BREVO_API_KEY', 'test')
+  vi.stubEnv('BREVO_SENDER_EMAIL', 'shop@example.com')
+}
+test('one receipt per finalized request and one immutable message per admin send', async () => {
+  enableTestEmail()
+  const { t, admin } = await setup()
+  const submissionKey = 'receipt-test-1234567'
+  const {leadId} = await t.mutation(api.estimateLeads.startSubmission, {...details, submissionKey})
+  const history = () => admin.query(api.estimateEmails.history, {id:leadId})
+  expect((await history()).rows).toHaveLength(0)
+  await t.mutation(api.estimateLeads.finalizeSubmission, {leadId, submissionKey})
+  await t.mutation(api.estimateLeads.finalizeSubmission, {leadId, submissionKey})
+  expect((await history()).rows).toHaveLength(1)
+  const quote = {id:leadId,minAmountCents:45000,maxAmountCents:55000}
+  await admin.mutation(api.estimateLeads.saveQuote, quote)
+  expect((await history()).rows).toHaveLength(1)
+  const email = {key:'repair-estimate-test-123',recipient:details.email,name:details.name,vehicle:'2020 Test Vehicle',details:'Repair <bumper>.'}
+  await expect(t.mutation(api.estimateLeads.saveQuote,{...quote,email})).rejects.toThrow('Admin')
+  await admin.mutation(api.estimateLeads.saveQuote,{...quote,email})
+  await admin.mutation(api.estimateLeads.saveQuote,{...quote,email})
+  await admin.mutation(api.estimateLeads.saveQuote,{id:leadId,minAmountCents:70000})
+  expect((await history()).rows).toHaveLength(2)
+  const row = await t.run(ctx => ctx.db.query('emailDeliveries').filter(q=>q.eq(q.field('kind'),'estimate')).unique())
+  expect(row?.htmlContent).toContain('Repair &lt;bumper&gt;.')
+  expect(row?.textContent).toContain('$450.00 – $550.00')
+})
+test.each([[201,'sent'],[429,'pending'],[503,'review'],[400,'failed']])('records provider response %s as %s', async (code,status) => {
+  enableTestEmail()
+  const {t} = await setup()
+  await t.mutation(internal.estimateLeads.create,{...details,photos:[]})
+  const row = await t.run(ctx => ctx.db.query('emailDeliveries').unique())
+  const provider = vi.spyOn(globalThis,'fetch')
+    .mockResolvedValueOnce(Response.json({plan:[{type:'free',credits:300}]}))
+    .mockResolvedValueOnce(Response.json({messageId:'sample'}, {status:Number(code)}))
+  try {
+    await t.action(internal.estimateEmails.deliver,{id:row!._id})
+    expect((await t.run(ctx => ctx.db.get(row!._id)))?.status).toBe(status)
+    expect(provider).toHaveBeenCalledTimes(2)
+  } finally { provider.mockRestore() }
 })

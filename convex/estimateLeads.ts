@@ -3,6 +3,9 @@ import { v } from 'convex/values'
 import { internal } from './_generated/api'
 import { getAdminUserId, requireAdmin } from './lib/requireAdmin'
 
+import { queueThanks, enqueue, emailEnabled } from './lib/emailQueue'
+import { estimateEmail } from '../shared/estimateEmail'
+
 const photoArg = v.object({
   storageId: v.id('_storage'),
   thumbnailStorageId: v.optional(v.id('_storage')),
@@ -65,7 +68,7 @@ function validateLeadDetails(args: any) {
 }
 
 function validatePhotos(photos: any[]) {
-  if (photos.length < 1 || photos.length > 8) throw new Error('Please upload between one and eight photos.')
+  if (photos.length > 8) throw new Error('Please upload at most eight photos.')
 }
 
 function validateSubmissionKey(submissionKey: string) {
@@ -225,6 +228,7 @@ export const finalizeSubmission = mutation({
       notificationStatus: 'pending',
       updatedAt: now
     })
+    await queueThanks(ctx, lead)
     await upsertCustomer(ctx, lead, args.leadId, now)
     await ctx.db.insert('estimateLeadEvents', { leadId: args.leadId, eventType: 'submitted', createdAt: now })
     await ctx.scheduler.runAfter(0, internal.estimateLeads.deliverNotification, { id: args.leadId })
@@ -314,6 +318,7 @@ export const create = internalMutation({
         createdAt: now
       })
     }
+    await queueThanks(ctx, { ...args, _id: id, vehicle })
     await upsertCustomer(ctx, args, id, now)
     await ctx.db.insert('estimateLeadEvents', { leadId: id, eventType: 'submitted', createdAt: now })
     return id
@@ -418,9 +423,10 @@ export const saveQuote = mutation({
   args: {
     id: v.id('estimateLeads'),
     minAmountCents: v.number(),
-    maxAmountCents: v.optional(v.number())
+    maxAmountCents: v.optional(v.number()),
+    email: v.optional(v.object({ details: v.string(), key: v.string(), recipient: v.string(), name: v.string(), vehicle: v.string() }))
   },
-  handler: async (ctx, { id, minAmountCents, maxAmountCents }) => {
+  handler: async (ctx, { id, minAmountCents, maxAmountCents, email }) => {
     const updatedBy = await requireAdmin(ctx)
     const lead = await ctx.db.get(id)
     if (!lead || lead.deletedAt) throw new Error('Lead not found. Restore it before saving a quote.')
@@ -431,6 +437,15 @@ export const saveQuote = mutation({
     }
     if (maxAmountCents !== undefined && maxAmountCents < minAmountCents) {
       throw new Error('The upper amount must be at least the quoted amount.')
+    }
+    if (email) {
+      if (!emailEnabled(lead.email)) throw new Error('Email sending is not enabled for this recipient yet.')
+      if (lead.archived || lead.submissionState === 'pending_upload') throw new Error('Open a completed, active request before sending.')
+      if (!email.details.trim() || email.details.length > 10000 || !/^[a-zA-Z0-9_-]{16,100}$/.test(email.key)) throw new Error('Check the estimate details and try again.')
+      if (email.recipient !== lead.email || email.name !== lead.name || email.vehicle !== (lead.vehicle || '')) throw new Error('Customer details changed. Reopen the estimate before sending.')
+      const message = estimateEmail({ kind: 'estimate', name: lead.name, vehicle: lead.vehicle, details: email.details.trim(), minAmountCents, maxAmountCents })
+      const added = await enqueue(ctx, lead, 'estimate', String(id) + ':' + email.key, message)
+      if (!added) return lead.quote
     }
     const now = Date.now()
     const quote = { minAmountCents, maxAmountCents, currency: 'USD' as const, updatedAt: now, updatedBy }

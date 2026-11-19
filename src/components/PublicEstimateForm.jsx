@@ -58,7 +58,7 @@ export default function PublicEstimateForm() {
 
   async function submit(event) {
     event.preventDefault()
-    if (files.length < 1 || files.length > 8) { setError('Please upload between one and eight photos.'); return }
+    if (files.length > 8) { setError('Please upload at most eight photos.'); return }
     setStatus('saving')
     setError('')
     try {
@@ -88,7 +88,7 @@ export default function PublicEstimateForm() {
         <a className="public-logo" href="index.html">Car Craft Autobody</a>
         <p className="eyebrow">Photo Estimate</p>
         <h1>Submit Your Vehicle Damage Photos</h1>
-        <p>Upload clear photos and vehicle details. Car Craft will review your request and contact you with the next step.</p>
+        <p>Upload clear photos and vehicle details. Car Craft will review your request and use your email to respond with an estimate.</p>
       </section>
 
       <form className="estimate-form" onSubmit={submit}>
@@ -127,8 +127,8 @@ export default function PublicEstimateForm() {
         </div>
 
         <div className="form-section">
-          <h2>Photos</h2>
-          <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} required />
+          <h2>Photos (optional)</h2>
+          <input type="file" accept="image/*" multiple onChange={(e) => setFiles(Array.from(e.target.files || []))} />
           <div className="photo-row">{previews.map((photo) => <img key={photo.url} src={photo.url} alt={photo.name} />)}</div>
         </div>
 

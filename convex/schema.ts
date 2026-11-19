@@ -56,6 +56,29 @@ export default defineSchema({
     createdAt: v.number(),
     updatedAt: v.number()
   }).index('by_user', ['userId']),
+  emailDeliveries: defineTable({
+    leadId: v.id("estimateLeads"),
+    kind: v.union(v.literal("thanks"), v.literal("estimate")),
+    key: v.string(),
+    email: v.string(), name: v.string(), subject: v.string(), htmlContent: v.string(), textContent: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("sending"),
+      v.literal("sent"),
+      v.literal("failed"),
+      v.literal("review"),
+    ),
+    attempts: v.number(),
+    nextAttemptAt: v.number(),
+    attemptedAt: v.optional(v.number()),
+    sentAt: v.optional(v.number()),
+    errorCode: v.optional(v.string()),
+    messageId: v.optional(v.string()),
+  })
+    .index("by_key", ["key"])
+    .index("by_lead", ["leadId"])
+    .index("by_status_next", ["status", "nextAttemptAt"]),
+  emailAttempts: defineTable({ at: v.number() }).index("by_at", ["at"]),
   estimateLeads: defineTable({
     name: v.string(),
     phone: v.string(),

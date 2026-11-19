@@ -10,4 +10,6 @@ crons.hourly(
   internal.timeClock.notifyMissingClockOuts
 )
 
+crons.interval('Deliver estimate emails', { minutes: 5 }, internal.estimateEmails.drain)
+
 export default crons

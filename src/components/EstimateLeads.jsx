@@ -14,6 +14,35 @@ function statusLabel(value) {
   return String(value || 'new').replaceAll('_', ' ')
 }
 
+function LeadPhotos({ lead, priority, onOpen }) {
+  const container = useRef(null)
+  const [visible, setVisible] = useState(priority)
+  const photos = useQuery(api.estimateLeads.getPhotos, visible ? { id: lead._id } : 'skip')
+  useEffect(() => {
+    if (priority) { setVisible(true); return }
+    if (visible || !container.current) return
+    if (!('IntersectionObserver' in window)) { setVisible(true); return }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.disconnect() }
+    }, { rootMargin: '100px 0px' })
+    observer.observe(container.current)
+    return () => observer.disconnect()
+  }, [priority, visible])
+  if (!lead.photoCount) return null
+  return <div className="photo-row lead-photo-row" ref={container}>
+    {photos ? photos.slice(0, 4).map((photo, index) => (
+      <button className="photo-thumbnail-button" type="button" key={photo.storageId}
+        onClick={() => onOpen({ ...lead, photos }, index)}
+        aria-label={`Open damage photo ${index + 1} of ${photos.length} for ${lead.name}`}>
+        <img src={photo.thumbnailUrl || photo.url} width="82" height="62" decoding="async"
+          loading="eager" fetchpriority={priority ? 'high' : 'low'}
+          onError={(event) => { if (event.currentTarget.src !== photo.url) event.currentTarget.src = photo.url }}
+          alt={photo.name || `Vehicle damage photo ${index + 1}`} />
+      </button>
+    )) : <span className="photo-placeholder">{lead.photoCount} photo{lead.photoCount === 1 ? '' : 's'} · {visible ? 'Loading…' : 'Loads as you scroll'}</span>}
+  </div>
+}
+
 const PAGE_SIZE = 12
 
 export default function EstimateLeads({ search = '' }) {
@@ -134,7 +163,7 @@ function LeadBrowser({ view, setView, term }) {
       {actionError ? <div className="error-box" role="alert">{actionError}</div> : null}
 
       <div className="command-list" ref={listTop} aria-busy={loading}>
-        {rows.map((lead) => (
+        {rows.map((lead, index) => (
           <article className={`command-card status-border-${lead.status}`} key={lead._id}>
             <div className="lead-card-content">
               <div className="command-topline">
@@ -149,7 +178,9 @@ function LeadBrowser({ view, setView, term }) {
               </div>
               <p className="muted">{lead.phone} · {lead.email} · {lead.vehicle || 'Vehicle not listed'}</p>
               <p>{lead.damageArea} · {lead.damageType} · Severity: {lead.severity}</p>
-              {lead.photoCount > 0 && <p className="muted">{lead.photoCount} {lead.photoCount === 1 ? 'photo' : 'photos'}</p>}
+              {lead.photoCount > 0 && (view === 'active'
+                ? <LeadPhotos lead={lead} priority={index < 4} onOpen={openLightbox} />
+                : <p className="muted">{lead.photoCount} {lead.photoCount === 1 ? 'photo' : 'photos'}</p>)}
 
             </div>
             <div className="quick-actions">

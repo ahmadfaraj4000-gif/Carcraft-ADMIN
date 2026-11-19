@@ -25,18 +25,33 @@ const leads = Array.from({ length: 14 }, (_, index) => ({ _id: 'lead-' + index, 
 beforeEach(() => {
   mocks.queries = []; mocks.callbacks = []; mocks.mutate.mockClear()
   mocks.archive = [{ _id: 'archived-1', name: 'Archived customer', status: 'archived', photoCount: 1 }]
-
+  vi.stubGlobal('IntersectionObserver', class {
+    constructor(callback) { mocks.callbacks.push(callback) }
+    observe() {}
+    disconnect() {}
+  })
 })
 afterEach(() => { cleanup(); vi.unstubAllGlobals() })
-test('paginates summaries without fetching details or photos until Open estimate', () => {
+test('only first four leads request photos initially; scrolling loads later previews and full image opens on click', () => {
+  render(<EstimateLeads />)
+  const ids = new Set(mocks.queries.filter((query) => query.name.endsWith('getPhotos')).map((query) => query.args.id))
+  expect([...ids]).toEqual(['lead-0', 'lead-1', 'lead-2', 'lead-3'])
+  expect(screen.getAllByRole('img')).toHaveLength(4)
+  expect(screen.getAllByRole('img').every((img) => img.getAttribute('src') === '/small.webp')).toBe(true)
+  act(() => mocks.callbacks[0]([{ isIntersecting: true }]))
+  expect(screen.getAllByRole('img')).toHaveLength(5)
+  fireEvent.click(screen.getByRole('button', { name: 'Open damage photo 1 of 1 for Customer 0' }))
+  expect(screen.getByRole('dialog').querySelector('img').getAttribute('src')).toBe('/original.jpg')
+})
+test('paginates previews without fetching full estimate details', () => {
   render(<EstimateLeads />)
   expect(screen.getAllByRole('button',{name:'Open estimate'})).toHaveLength(12)
   fireEvent.click(screen.getByRole('button',{name:'Next'}))
   expect(screen.getAllByRole('button',{name:'Open estimate'})).toHaveLength(2)
   expect(screen.getByRole('button',{name:'Next'}).disabled).toBe(true)
   fireEvent.click(screen.getByRole('button',{name:'Previous'}))
-  expect(mocks.queries.every(q=>q.name.endsWith('summaryPage'))).toBe(true)
-  expect(screen.queryAllByRole('img')).toHaveLength(0)
+  expect(mocks.queries.some(q=>q.name.endsWith('getDetails'))).toBe(false)
+  expect(screen.getAllByRole('img')).toHaveLength(4)
 })
 test('archive queries only after click and archive photos only after Open', () => {
   render(<EstimateLeads />)
